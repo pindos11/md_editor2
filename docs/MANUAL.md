@@ -17,14 +17,28 @@ This app is a local-first markdown workspace: a folder tree, markdown editor, pr
 ### Developer setup
 1. Create and activate a Python virtual environment.
 2. Install backend packages with `pip install -r requirements.txt`.
-3. Install frontend packages with `cmd /c npm install`.
-4. Rebuild the frontend bundle with `cmd /c npm run build` after frontend changes.
+3. Install frontend packages with `npm install`.
+4. Rebuild the frontend bundle with `npm run build` after frontend changes.
 
 ## Run
 Start the server with:
 
 ```bash
 python -m app --root ./workspace
+```
+
+Windows PowerShell virtual environment activation:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+```
+
+macOS / Linux virtual environment activation:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 ```
 
 Optional flags:
@@ -125,6 +139,11 @@ graph TD
   - `package-lock.json`
   - `vite.config.js`
 - End users do not need `node_modules/` or the frontend source tree if `app/static/` is already built.
+
+## Cross-Platform Notes
+- Windows, macOS, and Linux are all supported as long as Python 3.11+ is available.
+- Use `python3` instead of `python` on systems where that is the default Python 3 command.
+- `npm install`, `npm run test`, and `npm run build` are shell-neutral and work across Windows, macOS, and Linux when Node.js is installed.
 
 ## Ollama
 - Default endpoint: `http://127.0.0.1:11434`

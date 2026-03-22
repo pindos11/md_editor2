@@ -21,13 +21,32 @@ If the recipient needs to modify the frontend and rebuild it, also ship:
 3. Start the app with `python -m app --root ./workspace`.
 4. Open `http://127.0.0.1:8000`.
 
+Windows PowerShell:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python -m app --root .\workspace
+```
+
+macOS / Linux:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m app --root ./workspace
+```
+
 ## Rebuild Frontend
 Only needed after frontend source changes:
-1. Install frontend dependencies with `cmd /c npm install`.
-2. Build with `cmd /c npm run build`.
+1. Install frontend dependencies with `npm install`.
+2. Build with `npm run build`.
 3. Distribute the refreshed `app/static/` bundle with the backend.
 
 ## Notes
 - The app is single-user and local-first.
 - Runtime operation does not require internet access except optional local Ollama connectivity.
 - Workspace-specific settings are stored inside the chosen root under `.mdeditor/`.
+- Windows, macOS, and Linux are supported; only virtual environment activation syntax differs.

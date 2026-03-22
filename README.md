@@ -15,7 +15,7 @@ The app is served by a Python backend and uses a bundled frontend. Runtime use d
 
 End users need:
 - Python 3.11+
-- the project files, including [app/static](/d:/md_editor2/app/static)
+- the project files, including [app/static](app/static)
 
 Developers also need:
 - Node.js
@@ -27,11 +27,22 @@ Developers also need:
 2. Install backend dependencies.
 3. Start the app with a workspace root.
 
+Windows PowerShell:
+
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 python -m app --root .\workspace
+```
+
+macOS / Linux:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m app --root ./workspace
 ```
 
 Then open `http://127.0.0.1:8000`.
@@ -40,20 +51,20 @@ Then open `http://127.0.0.1:8000`.
 
 If you change frontend source, rebuild the bundled static assets:
 
-```powershell
-cmd /c npm install
-cmd /c npm run build
+```bash
+npm install
+npm run build
 ```
 
-The built frontend is written into [app/static](/d:/md_editor2/app/static) and served by Python.
+The built frontend is written into [app/static](app/static) and served by Python.
 
 ## Project Layout
 
-- [app](/d:/md_editor2/app): Python backend, API, static serving
-- [frontend](/d:/md_editor2/frontend): React source
-- [app/static](/d:/md_editor2/app/static): built offline frontend bundle
-- [tests](/d:/md_editor2/tests): backend tests
-- [docs](/d:/md_editor2/docs): plan, manual, API, deployment notes
+- [app](app): Python backend, API, static serving
+- [frontend](frontend): React source
+- [app/static](app/static): built offline frontend bundle
+- [tests](tests): backend tests
+- [docs](docs): plan, manual, API, deployment notes
 
 ## Main Features
 
@@ -73,19 +84,27 @@ The built frontend is written into [app/static](/d:/md_editor2/app/static) and s
 
 Backend:
 
+Windows PowerShell:
+
 ```powershell
 .\.venv\Scripts\python -m pytest
 ```
 
+macOS / Linux:
+
+```bash
+.venv/bin/python -m pytest
+```
+
 Frontend:
 
-```powershell
-cmd /c npm run test
+```bash
+npm run test
 ```
 
 ## Documentation
 
-- [docs/MANUAL.md](/d:/md_editor2/docs/MANUAL.md)
-- [docs/API.md](/d:/md_editor2/docs/API.md)
-- [docs/DEPLOYMENT.md](/d:/md_editor2/docs/DEPLOYMENT.md)
-- [docs/PLAN.md](/d:/md_editor2/docs/PLAN.md)
+- [docs/MANUAL.md](docs/MANUAL.md)
+- [docs/API.md](docs/API.md)
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- [docs/PLAN.md](docs/PLAN.md)
