@@ -47,4 +47,5 @@
 - `GET /api/database` lists markdown notes directly inside a folder and extracts simple YAML-style frontmatter fields.
 - `GET /api/database/view-settings` returns saved folder view preferences, defaulting missing fields such as `view_mode` to `table`.
 - `GET /api/database/views` returns the named saved views for a folder together with the active view id.
+- `PUT /api/document` may normalize frontmatter on save by maintaining `title`, `created`, and `updated`.
 - Document HTML renders wiki-links as `wikilink:` anchors so the frontend can open linked notes locally.

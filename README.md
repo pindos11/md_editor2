@@ -5,6 +5,7 @@ Single-user, offline-first markdown workspace with:
 - markdown editor + preview
 - backlinks and wiki-links
 - folder database / board views from frontmatter
+- multiple saved database views per folder
 - local attachments
 - folder templates
 - optional local Ollama integration
@@ -74,7 +75,9 @@ The built frontend is written into [app/static](app/static) and served by Python
 - `_attachments/` for uploaded note files
 - frontmatter-backed table and board views
 - multiple saved database views per folder
+- per-item remembered pane widths, tree-only scrolling, and a persisted UI scale control
 - folder-level note templates
+- automatic `title`, `created`, and `updated` frontmatter management on save
 - preview rendering for:
   - markdown
   - wiki-links

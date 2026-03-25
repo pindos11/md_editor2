@@ -59,11 +59,14 @@ Open `http://127.0.0.1:8000` in a browser.
 - Type `/` at the start of a line to open slash commands.
 - `Ctrl+S` or `Cmd+S` triggers an immediate save.
 - `Ctrl+K` or `Cmd+K` opens quick note search.
+- The folder tree has its own vertical scroll area; the rest of the page keeps the main document/page scroll.
 - The `Blocks` panel lets you jump to blocks and move them up or down.
 - Heading blocks can be collapsed from the `Blocks` panel to simplify preview focus.
 - Typing `[[` starts wiki-link suggestions for existing notes.
 - Wiki-links such as `[[Project Notes]]` are clickable in preview.
 - The sidebar backlinks panel shows which notes reference the current note.
+- The `Menu` popover includes a persisted UI scale slider for larger or smaller text.
+- Pane divider widths are remembered per note and per folder; if an item has no saved widths yet, it inherits the current layout once and then keeps its own state.
 - Fenced `mermaid` blocks render as diagrams in preview.
 - Fenced code blocks with a named language such as `python`, `js`, `ts`, `json`, `bash`, `yaml`, or `sql` render with preview-only syntax highlighting.
 - `Save as template` stores the current note content as the default starter template for its folder.
@@ -91,7 +94,7 @@ Open `http://127.0.0.1:8000` in a browser.
 - In board mode, notes are grouped by `status`, and changing a card's status moves it between columns after save.
 - The `Status options` field lets you define the board/select values for that folder, for example `queued, doing, done`.
 - Use the visible-column toggles to hide fields you do not want in the table or board card metadata.
-- `status` uses a dropdown, `due` uses a date input, and `tags` remain comma-separated text that saves back as a YAML list.
+- `status` uses a dropdown, `due` uses a date input, `created` and `updated` use datetime inputs in table view, and `tags` remain comma-separated text that saves back as a YAML list.
 - Fields such as `relation`, `relations`, `related`, `link`, or `links` are treated as note-reference fields.
 - Relation fields accept comma-separated note names and save back as YAML lists.
 - Relation chips in the database are clickable and open the referenced note when it exists in the workspace.
@@ -100,6 +103,14 @@ Open `http://127.0.0.1:8000` in a browser.
 - New notes use the saved folder template when one exists; otherwise the app falls back to the default markdown starter content.
 - For `tags`, enter a comma-separated list and it will be written back as a YAML-style array.
 - Click a row title or board card title to open the note in the editor.
+
+## Automatic Metadata
+- On save, the backend can add or maintain `title`, `created`, and `updated` frontmatter.
+- `title` is auto-filled when missing, using the same first-heading / first-content-line logic used for note summaries.
+- `created` is set once when the note first gains this metadata.
+- `updated` is refreshed on normal saves.
+- If you edit `updated` directly from the database table, that explicit value is preserved instead of being immediately overwritten.
+- Exported timestamp formats like `2025-09-23 20:45:54Z` are accepted by the database table editor.
 
 Example:
 
