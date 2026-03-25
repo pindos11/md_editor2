@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_workspace
 from app.api.errors import missing_folder, workspace_bad_request
-from app.models import DatabaseViewSettings
+from app.models import DatabaseViewCollection, DatabaseViewSettings
 from app.services.workspace import WorkspaceError, WorkspaceManager
 
 
@@ -29,6 +29,14 @@ async def get_database_view_settings(path: str = Query(""), workspace: Workspace
         raise workspace_bad_request(exc)
 
 
+@router.get("/api/database/views")
+async def get_database_views(path: str = Query(""), workspace: WorkspaceManager = Depends(get_workspace)) -> dict:
+    try:
+        return workspace.load_database_views(path).model_dump()
+    except WorkspaceError as exc:
+        raise workspace_bad_request(exc)
+
+
 @router.put("/api/database/view-settings")
 async def update_database_view_settings(
     path: str = Query(""),
@@ -37,5 +45,18 @@ async def update_database_view_settings(
 ) -> dict:
     try:
         return (await workspace.save_database_view_settings(path, settings or DatabaseViewSettings())).model_dump()
+    except WorkspaceError as exc:
+        raise workspace_bad_request(exc)
+
+
+@router.put("/api/database/views")
+async def update_database_views(
+    path: str = Query(""),
+    views: DatabaseViewCollection | None = None,
+    workspace: WorkspaceManager = Depends(get_workspace),
+) -> dict:
+    try:
+        collection = views or DatabaseViewCollection(folder_path=path or "")
+        return (await workspace.save_database_views(path, collection)).model_dump()
     except WorkspaceError as exc:
         raise workspace_bad_request(exc)

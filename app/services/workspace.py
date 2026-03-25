@@ -14,11 +14,13 @@ import json
 from app.models import (
     AttachmentResponse,
     BacklinkItem,
+    DatabaseViewCollection,
     DatabaseViewSettings,
     DocumentResponse,
     FolderTemplate,
     FolderDatabaseResponse,
     FolderNoteSummary,
+    NamedDatabaseView,
     OllamaSettings,
     SearchResult,
     TreeNode,
@@ -34,6 +36,7 @@ UI_STATE_FILE = "ui_state.json"
 TEMPLATES_FILE = "templates.json"
 WIKI_LINK_PATTERN = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
 FRONTMATTER_PATTERN = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
+AUTO_TITLE_LIMIT = 140
 
 
 class WorkspaceError(Exception):
@@ -183,6 +186,33 @@ class WorkspaceManager:
             return stripped
         return fallback_name
 
+    def _normalize_auto_title(self, value: str, fallback_name: str) -> str:
+        title = re.sub(r"\s+", " ", (value or "").strip()) or fallback_name
+        if len(title) <= AUTO_TITLE_LIMIT:
+            return title
+        return f"{title[:AUTO_TITLE_LIMIT - 1].rstrip()}…"
+
+    def _current_timestamp(self) -> str:
+        return datetime.datetime.now().astimezone().replace(second=0, microsecond=0).isoformat(timespec="minutes")
+
+    def _serialize_frontmatter(self, frontmatter: dict[str, str | list[str]], body: str) -> str:
+        entries = list(frontmatter.items())
+        if not entries:
+            return body.lstrip("\n")
+        lines: list[str] = []
+        for key, value in entries:
+            if isinstance(value, list):
+                if not value:
+                    lines.append(f"{key}:")
+                else:
+                    lines.append(f"{key}:")
+                    lines.extend(f"  - {item}" for item in value)
+            else:
+                lines.append(f"{key}: {value}")
+        frontmatter_text = "\n".join(lines)
+        normalized_body = body.lstrip("\n")
+        return f"---\n{frontmatter_text}\n---\n{normalized_body}"
+
     def _slugify_name(self, value: str) -> str:
         slug = re.sub(r"[^a-z0-9]+", "-", value.strip().lower()).strip("-")
         return slug or "untitled"
@@ -241,8 +271,27 @@ class WorkspaceManager:
         if document_path.suffix.lower() != ".md":
             raise WorkspaceError("Only markdown files are supported.")
         document_path.parent.mkdir(parents=True, exist_ok=True)
+        existing_frontmatter: dict[str, str | list[str]] = {}
+        if document_path.exists():
+            existing_content = document_path.read_text(encoding="utf-8")
+            existing_frontmatter, _ = self._parse_frontmatter(existing_content)
+        frontmatter, body = self._parse_frontmatter(content)
+        timestamp = self._current_timestamp()
+        incoming_updated = str(frontmatter.get("updated", "")).strip() if "updated" in frontmatter else ""
+        existing_updated = str(existing_frontmatter.get("updated", "")).strip() if "updated" in existing_frontmatter else ""
+        frontmatter["created"] = str(frontmatter.get("created") or existing_frontmatter.get("created") or timestamp)
+        if not str(frontmatter.get("title", "")).strip():
+            frontmatter["title"] = self._normalize_auto_title(
+                self._title_from_body(body, document_path.stem),
+                document_path.stem,
+            )
+        if incoming_updated and incoming_updated != existing_updated:
+            frontmatter["updated"] = incoming_updated
+        else:
+            frontmatter["updated"] = timestamp
+        normalized_content = self._serialize_frontmatter(frontmatter, body)
         async with self._write_lock:
-            document_path.write_text(content, encoding="utf-8")
+            document_path.write_text(normalized_content, encoding="utf-8")
         return self.get_document(raw_path)
 
     async def create_node(self, raw_path: str, node_type: str) -> None:
@@ -383,19 +432,63 @@ class WorkspaceManager:
         return settings
 
     def load_database_view_settings(self, raw_path: str) -> DatabaseViewSettings:
+        collection = self.load_database_views(raw_path)
+        active = next((view for view in collection.views if view.view_id == collection.active_view_id), None)
+        return active.settings if active else DatabaseViewSettings()
+
+    async def save_database_view_settings(self, raw_path: str, settings: DatabaseViewSettings) -> DatabaseViewSettings:
+        collection = self.load_database_views(raw_path)
+        updated = False
+        for index, view in enumerate(collection.views):
+            if view.view_id == collection.active_view_id:
+                collection.views[index] = NamedDatabaseView(view_id=view.view_id, name=view.name, settings=settings)
+                updated = True
+                break
+        if not updated:
+            collection.views.append(NamedDatabaseView(view_id=collection.active_view_id, name="Default", settings=settings))
+        await self.save_database_views(raw_path, collection)
+        return settings
+
+    def _normalize_database_views(self, raw_path: str, stored: object) -> DatabaseViewCollection:
+        key = raw_path or ""
+        if isinstance(stored, dict) and "views" in stored:
+            collection = DatabaseViewCollection.model_validate({"folder_path": key, **stored})
+        else:
+            collection = DatabaseViewCollection(
+                folder_path=key,
+                active_view_id="default",
+                views=[
+                    NamedDatabaseView(
+                        view_id="default",
+                        name="Default",
+                        settings=DatabaseViewSettings.model_validate(stored or {}),
+                    )
+                ],
+            )
+        if not collection.views:
+            collection.views = [NamedDatabaseView(view_id="default", name="Default")]
+        if not any(view.view_id == collection.active_view_id for view in collection.views):
+            collection.active_view_id = collection.views[0].view_id
+        return collection
+
+    def load_database_views(self, raw_path: str) -> DatabaseViewCollection:
         self.initialize()
         key = raw_path or ""
         payload = json.loads(self.db_views_path.read_text(encoding="utf-8"))
-        return DatabaseViewSettings.model_validate(payload.get(key, {}))
+        return self._normalize_database_views(key, payload.get(key, {}))
 
-    async def save_database_view_settings(self, raw_path: str, settings: DatabaseViewSettings) -> DatabaseViewSettings:
+    async def save_database_views(self, raw_path: str, collection: DatabaseViewCollection) -> DatabaseViewCollection:
         self.initialize()
         key = raw_path or ""
+        stored = self._normalize_database_views(key, collection.model_dump())
         async with self._write_lock:
             payload = json.loads(self.db_views_path.read_text(encoding="utf-8"))
-            payload[key] = settings.model_dump()
+            payload[key] = {
+                "active_view_id": stored.active_view_id,
+                "views": [view.model_dump() for view in stored.views],
+            }
             self.db_views_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        return settings
+        return stored
 
     def load_ui_state(self) -> UiState:
         self.initialize()

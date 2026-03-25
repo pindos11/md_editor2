@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { getRelationItems, isRelationField } from "../editorModel";
 
 const DEFAULT_STATUS_OPTIONS = ["backlog", "active", "in-progress", "paused", "done"];
+const TITLE_PREVIEW_LIMIT = 96;
 
 function formatCellValue(value) {
   if (Array.isArray(value)) {
@@ -17,10 +18,42 @@ function inferInputType(column) {
   if (column === "due") {
     return "date";
   }
+  if (column === "created" || column === "updated") {
+    return "datetime";
+  }
   if (column === "tags") {
     return "tags";
   }
   return "text";
+}
+
+function toDateTimeInputValue(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "";
+  }
+  const directMatch = normalized.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?$/);
+  if (directMatch) {
+    return `${directMatch[1]}T${directMatch[2]}`;
+  }
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const hours = String(parsed.getHours()).padStart(2, "0");
+  const minutes = String(parsed.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function clampTitle(value) {
+  const normalized = String(value || "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= TITLE_PREVIEW_LIMIT) {
+    return normalized;
+  }
+  return `${normalized.slice(0, TITLE_PREVIEW_LIMIT - 1).trimEnd()}…`;
 }
 
 function includesFilter(note, filterText, columns) {
@@ -115,6 +148,17 @@ function FieldEditor({ column, value, statusOptions, relationSuggestions, relati
   if (inputType === "date") {
     return <input type="date" className="database-cell-input" value={value} onChange={(event) => onChange(event.target.value)} onBlur={onBlur} />;
   }
+  if (inputType === "datetime") {
+    return (
+      <input
+        type="datetime-local"
+        className="database-cell-input"
+        value={toDateTimeInputValue(value)}
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
+      />
+    );
+  }
   return (
     <>
       <input
@@ -149,12 +193,17 @@ function FieldEditor({ column, value, statusOptions, relationSuggestions, relati
 export function DatabaseView({
   folderPath,
   database,
+  databaseViews,
   viewSettings,
   onOpenNote,
   onOpenRelation,
   onCreateRelation,
   onSaveField,
   onChangeViewSettings,
+  onSelectView,
+  onCreateView,
+  onRenameView,
+  onDeleteView,
   onCreateNote,
   relationOptions
 }) {
@@ -163,6 +212,10 @@ export function DatabaseView({
   const [savingCell, setSavingCell] = useState("");
   const [activeRelationCell, setActiveRelationCell] = useState("");
   const [statusOptionsDraft, setStatusOptionsDraft] = useState("");
+  const activeView = useMemo(
+    () => databaseViews.views?.find((view) => view.view_id === databaseViews.active_view_id) || databaseViews.views?.[0],
+    [databaseViews]
+  );
   const statusOptions = useMemo(() => normalizeStatusOptions(viewSettings.status_options), [viewSettings.status_options]);
   const visibleColumns = useMemo(() => {
     const configured = (viewSettings.visible_columns || []).filter((column) => database.columns.includes(column));
@@ -328,6 +381,56 @@ export function DatabaseView({
         </div>
         <button type="button" onClick={onCreateNote}>New Note</button>
       </div>
+      <div className="database-view-management">
+        <label className="database-view-picker">
+          <span>View</span>
+          <select value={databaseViews.active_view_id} onChange={(event) => onSelectView(event.target.value)}>
+            {(databaseViews.views || []).map((view) => (
+              <option key={view.view_id} value={view.view_id}>
+                {view.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="database-view-actions">
+          <button
+            type="button"
+            className="mini-btn"
+            onClick={() => {
+              const name = window.prompt("New view name", `${activeView?.name || "View"} Copy`);
+              if (name) {
+                onCreateView(name);
+              }
+            }}
+          >
+            Save as new view
+          </button>
+          <button
+            type="button"
+            className="mini-btn"
+            onClick={() => {
+              const name = window.prompt("Rename view", activeView?.name || "View");
+              if (name) {
+                onRenameView(name);
+              }
+            }}
+          >
+            Rename view
+          </button>
+          <button
+            type="button"
+            className="mini-btn"
+            onClick={() => {
+              if (databaseViews.active_view_id !== "default" && window.confirm(`Delete view "${activeView?.name || "View"}"?`)) {
+                onDeleteView(databaseViews.active_view_id);
+              }
+            }}
+            disabled={databaseViews.active_view_id === "default"}
+          >
+            Delete view
+          </button>
+        </div>
+      </div>
       <div className="database-controls">
         <input
           type="text"
@@ -391,7 +494,7 @@ export function DatabaseView({
                       columnNotes.map((note) => (
                         <article key={note.path} className="board-card">
                           <button type="button" className="database-link board-card-link" onClick={() => onOpenNote(note.path)}>
-                            {note.title}
+                            {clampTitle(note.title)}
                           </button>
                           <FieldEditor
                             column="status"
@@ -452,7 +555,7 @@ export function DatabaseView({
                   <tr key={note.path}>
                     <td>
                       <button type="button" className="database-link" onClick={() => onOpenNote(note.path)}>
-                        {note.title}
+                        {clampTitle(note.title)}
                       </button>
                     </td>
                     {visibleColumns.map((column) => {

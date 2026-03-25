@@ -58,7 +58,8 @@ def test_document_crud_flow(client: TestClient) -> None:
 
     get_response = client.get("/api/document", params={"path": "notes/day.md"})
     assert get_response.status_code == 200
-    assert get_response.json()["content"] == "# Updated"
+    assert get_response.json()["content"].endswith("# Updated")
+    assert get_response.json()["frontmatter"]["title"] == "Updated"
 
     move_response = client.patch(
         "/api/document",
@@ -153,6 +154,36 @@ def test_document_response_includes_frontmatter(client: TestClient) -> None:
     assert "<hr" not in response.json()["html"]
 
 
+def test_save_document_auto_adds_title_created_and_updated(client: TestClient) -> None:
+    client.post("/api/document", json={"path": "meta.md", "node_type": "file"})
+
+    save_response = client.put(
+        "/api/document",
+        json={"path": "meta.md", "content": "# Hello World\n\nBody"},
+    )
+
+    assert save_response.status_code == 200
+    payload = save_response.json()
+    assert payload["frontmatter"]["title"] == "Hello World"
+    assert payload["frontmatter"]["created"]
+    assert payload["frontmatter"]["updated"]
+    assert payload["content"].startswith("---\n")
+
+
+def test_save_document_preserves_explicit_updated_value(client: TestClient) -> None:
+    client.post("/api/document", json={"path": "meta.md", "node_type": "file"})
+    client.put("/api/document", json={"path": "meta.md", "content": "# Hello"})
+
+    save_response = client.put(
+        "/api/document",
+        json={"path": "meta.md", "content": "---\nupdated: 2026-03-25T12:45\ntitle: Hello\ncreated: 2026-03-25T12:30\n---\n# Hello"},
+    )
+
+    assert save_response.status_code == 200
+    payload = save_response.json()
+    assert payload["frontmatter"]["updated"] == "2026-03-25T12:45"
+
+
 def test_database_view_settings_round_trip(client: TestClient) -> None:
     save_response = client.put(
         "/api/database/view-settings",
@@ -177,6 +208,40 @@ def test_database_view_settings_round_trip(client: TestClient) -> None:
     assert get_response.json()["visible_columns"] == ["owner", "due"]
 
 
+def test_database_views_round_trip_and_legacy_compatibility(client: TestClient, tmp_path: Path) -> None:
+    response = client.put(
+        "/api/database/views",
+        params={"path": "projects"},
+        json={
+            "folder_path": "projects",
+            "active_view_id": "delivery",
+            "views": [
+                {
+                    "view_id": "planning",
+                    "name": "Planning",
+                    "settings": {"filter_text": "", "sort_by": "title", "sort_direction": "asc", "view_mode": "table", "status_options": ["backlog"], "visible_columns": ["status"]},
+                },
+                {
+                    "view_id": "delivery",
+                    "name": "Delivery",
+                    "settings": {"filter_text": "road", "sort_by": "due", "sort_direction": "desc", "view_mode": "board", "status_options": ["doing", "done"], "visible_columns": ["due"]},
+                },
+            ],
+        },
+    )
+    assert response.status_code == 200
+
+    get_response = client.get("/api/database/views", params={"path": "projects"})
+    assert get_response.status_code == 200
+    payload = get_response.json()
+    assert payload["active_view_id"] == "delivery"
+    assert len(payload["views"]) == 2
+
+    active_settings = client.get("/api/database/view-settings", params={"path": "projects"}).json()
+    assert active_settings["sort_by"] == "due"
+    assert active_settings["view_mode"] == "board"
+
+
 def test_database_view_settings_defaults_missing_fields(tmp_path: Path) -> None:
     manager = WorkspaceManager(tmp_path)
     manager.initialize()
@@ -190,6 +255,19 @@ def test_database_view_settings_defaults_missing_fields(tmp_path: Path) -> None:
     assert settings.view_mode == "table"
     assert settings.status_options == ["backlog", "active", "in-progress", "paused", "done"]
     assert settings.visible_columns == []
+
+
+def test_database_views_loads_legacy_single_view_payload(tmp_path: Path) -> None:
+    manager = WorkspaceManager(tmp_path)
+    manager.initialize()
+    manager.db_views_path.write_text('{"projects": {"filter_text": "road"}}', encoding="utf-8")
+
+    collection = manager.load_database_views("projects")
+
+    assert collection.active_view_id == "default"
+    assert len(collection.views) == 1
+    assert collection.views[0].name == "Default"
+    assert collection.views[0].settings.filter_text == "road"
 
 
 def test_ui_state_round_trip_and_missing_target_defaults(tmp_path: Path) -> None:

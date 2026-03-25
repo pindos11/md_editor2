@@ -21,6 +21,7 @@ export function WorkspacePanels({
   collapsedHeadings,
   backlinks,
   database,
+  databaseViews,
   databaseViewSettings,
   relationOptions,
   textareaRef,
@@ -40,6 +41,10 @@ export function WorkspacePanels({
   onCreateRelation,
   onSaveDatabaseField,
   onChangeDatabaseViewSettings,
+  onSelectDatabaseView,
+  onCreateDatabaseView,
+  onRenameDatabaseView,
+  onDeleteDatabaseView,
   onCreateDatabaseNote,
   onEditorChange,
   onEditorCursorChange,
@@ -57,13 +62,15 @@ export function WorkspacePanels({
           <h2>Workspace</h2>
           <p>{selectedPath || selectedFolderPath || "Pick a note to start editing"}</p>
         </div>
-        <TreeView
-          tree={tree}
-          selectedPath={selectedPath}
-          selectedFolderPath={selectedFolderPath}
-          onSelectFile={onSelectFile}
-          onSelectFolder={onSelectFolder}
-        />
+        <div className="tree-scroll">
+          <TreeView
+            tree={tree}
+            selectedPath={selectedPath}
+            selectedFolderPath={selectedFolderPath}
+            onSelectFile={onSelectFile}
+            onSelectFolder={onSelectFolder}
+          />
+        </div>
         {viewMode === "editor" ? (
           <BlockOutline
             blocks={blocks}
@@ -82,6 +89,7 @@ export function WorkspacePanels({
         <DatabaseView
           folderPath={selectedFolderPath}
           database={database}
+          databaseViews={databaseViews}
           viewSettings={databaseViewSettings}
           relationOptions={relationOptions}
           onOpenNote={onOpenNote}
@@ -89,6 +97,10 @@ export function WorkspacePanels({
           onCreateRelation={onCreateRelation}
           onSaveField={onSaveDatabaseField}
           onChangeViewSettings={onChangeDatabaseViewSettings}
+          onSelectView={onSelectDatabaseView}
+          onCreateView={onCreateDatabaseView}
+          onRenameView={onRenameDatabaseView}
+          onDeleteView={onDeleteDatabaseView}
           onCreateNote={onCreateDatabaseNote}
         />
       ) : (

@@ -2,11 +2,13 @@ import React, { useRef, useState } from "react";
 
 export function Toolbar({
   selectedPath,
+  uiScale,
   onCreateFile,
   onCreateFolder,
   onRename,
   onDelete,
   onQuickFind,
+  onChangeUiScale,
   ollamaSettings,
   onSaveTemplate,
   onClearTemplate,
@@ -34,6 +36,17 @@ export function Toolbar({
           </button>
           {menuOpen ? (
             <div className="toolbar-popover" role="menu" aria-label="Workspace actions">
+              <label className="toolbar-scale" aria-label="Scale">
+                <span>Scale {uiScale}%</span>
+                <input
+                  type="range"
+                  min="85"
+                  max="125"
+                  step="5"
+                  value={uiScale}
+                  onChange={(event) => onChangeUiScale(Number(event.target.value))}
+                />
+              </label>
               <button type="button" onClick={() => runMenuAction(onCreateFile)}>New note</button>
               <button type="button" onClick={() => runMenuAction(onCreateFolder)}>New folder</button>
               <button type="button" onClick={() => runMenuAction(onQuickFind)}>Quick find</button>

@@ -82,6 +82,11 @@ Open `http://127.0.0.1:8000` in a browser.
 - Click any column header to sort ascending or descending.
 - Use `Table` and `Board` to switch between a sortable table and status-grouped board columns.
 - View mode, filter, sort, status options, and visible columns are remembered per folder in app metadata.
+- Each folder can now store multiple named database views.
+- Use the view picker to switch between saved views for the current folder.
+- `Save as new view` stores the current database configuration as another named view.
+- `Rename view` changes the current view name.
+- `Delete view` removes the current view, except for the default view.
 - Edit metadata inline in the table; changes save back into the note frontmatter on blur.
 - In board mode, notes are grouped by `status`, and changing a card's status moves it between columns after save.
 - The `Status options` field lets you define the board/select values for that folder, for example `queued, doing, done`.

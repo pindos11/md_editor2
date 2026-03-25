@@ -30,6 +30,15 @@ const SLASH_COMMANDS = [
   { id: "meeting", label: "meeting", description: "Meeting note template", insert: "# Meeting\n\n## Agenda\n- \n\n## Notes\n- \n\n## Actions\n- [ ] " },
   { id: "daily", label: "daily", description: "Daily note template", insert: "# Daily Note\n\n## Focus\n- \n\n## Journal\n\n## Wins\n- " },
 ];
+const UI_SCALE_STORAGE_KEY = "md-editor2:ui-scale";
+
+function loadStoredUiScale() {
+  if (typeof window === "undefined") {
+    return 100;
+  }
+  const raw = Number(window.localStorage.getItem(UI_SCALE_STORAGE_KEY));
+  return Number.isFinite(raw) ? Math.max(85, Math.min(125, raw)) : 100;
+}
 
 export function App() {
   const [tree, setTree] = useState([]);
@@ -55,7 +64,20 @@ export function App() {
     status_options: ["backlog", "active", "in-progress", "paused", "done"],
     visible_columns: [],
   });
+  const [databaseViews, setDatabaseViews] = useState({
+    folder_path: "",
+    active_view_id: "default",
+    views: [{ view_id: "default", name: "Default", settings: {
+      filter_text: "",
+      sort_by: "title",
+      sort_direction: "asc",
+      view_mode: "table",
+      status_options: ["backlog", "active", "in-progress", "paused", "done"],
+      visible_columns: [],
+    } }],
+  });
   const [viewMode, setViewMode] = useState("editor");
+  const [uiScale, setUiScale] = useState(loadStoredUiScale);
   const saveTimer = useRef(null);
   const textareaRef = useRef(null);
   const skipAutosaveRef = useRef(false);
@@ -63,7 +85,8 @@ export function App() {
   const aliasMap = useMemo(() => buildAliasMap(tree), [tree]);
   const relationOptions = useMemo(() => flattenFiles(tree).map((node) => node.name.replace(/\.md$/i, "")), [tree]);
   const blocks = useMemo(() => parseBlocks(documentContent), [documentContent]);
-  const { dragState, startResize, workspaceRef, workspaceStyle } = usePaneLayout();
+  const layoutKey = selectedPath || selectedFolderPath || "__global__";
+  const { dragState, startResize, workspaceRef, workspaceStyle } = usePaneLayout(layoutKey);
 
   function normalizeTargetLabel(rawTarget) {
     return String(rawTarget || "")
@@ -127,6 +150,36 @@ export function App() {
 
   function getDefaultStatus() {
     return databaseViewSettings.status_options?.[0] || "backlog";
+  }
+
+  function normalizeViewId(value) {
+    return String(value || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "view";
+  }
+
+  function buildDefaultDatabaseViewSettings() {
+    return {
+      filter_text: "",
+      sort_by: "title",
+      sort_direction: "asc",
+      view_mode: "table",
+      status_options: ["backlog", "active", "in-progress", "paused", "done"],
+      visible_columns: [],
+    };
+  }
+
+  function normalizeDatabaseViews(payload, folderPath = "") {
+    if (payload?.views?.length) {
+      return payload;
+    }
+    return {
+      folder_path: folderPath,
+      active_view_id: "default",
+      views: [{ view_id: "default", name: "Default", settings: payload || buildDefaultDatabaseViewSettings() }],
+    };
   }
 
   function applyTemplatePlaceholders(template, title, folderPath = "") {
@@ -200,9 +253,11 @@ export function App() {
     setDatabase(payload);
   }
 
-  async function loadDatabaseViewSettings(folderPath = "") {
-    const payload = await api.getDatabaseViewSettings(folderPath);
-    setDatabaseViewSettings(payload);
+  async function loadDatabaseViews(folderPath = "") {
+    const payload = normalizeDatabaseViews(await api.getDatabaseViews(folderPath), folderPath);
+    setDatabaseViews(payload);
+    const active = payload.views.find((view) => view.view_id === payload.active_view_id) || payload.views[0];
+    setDatabaseViewSettings(active?.settings || buildDefaultDatabaseViewSettings());
   }
 
   function updateSlashState(value, selectionStart) {
@@ -250,7 +305,7 @@ export function App() {
     setBacklinks([]);
     setCollapsedHeadings(new Set());
     setViewMode("database");
-    await Promise.all([loadDatabase(folderPath), loadDatabaseViewSettings(folderPath)]);
+    await Promise.all([loadDatabase(folderPath), loadDatabaseViews(folderPath)]);
     setStatusMessage(`Loaded database for ${folderPath || "workspace"}`);
     api.saveUiState({ kind: "folder", path: folderPath }).catch(() => {});
   }
@@ -264,8 +319,72 @@ export function App() {
   }
 
   async function saveDatabaseViewSettings(nextSettings) {
+    const nextCollection = {
+      ...databaseViews,
+      views: databaseViews.views.map((view) =>
+        view.view_id === databaseViews.active_view_id ? { ...view, settings: nextSettings } : view
+      ),
+    };
     setDatabaseViewSettings(nextSettings);
-    await api.saveDatabaseViewSettings(selectedFolderPath, nextSettings);
+    setDatabaseViews(nextCollection);
+    await api.saveDatabaseViews(selectedFolderPath, nextCollection);
+  }
+
+  async function saveDatabaseViews(nextViews) {
+    const active = nextViews.views.find((view) => view.view_id === nextViews.active_view_id) || nextViews.views[0];
+    setDatabaseViews(nextViews);
+    setDatabaseViewSettings(active?.settings || buildDefaultDatabaseViewSettings());
+    await api.saveDatabaseViews(selectedFolderPath, nextViews);
+  }
+
+  async function selectDatabaseView(viewId) {
+    const nextViews = { ...databaseViews, active_view_id: viewId };
+    await saveDatabaseViews(nextViews);
+  }
+
+  async function createDatabaseView(name) {
+    const cleanName = String(name || "").trim();
+    if (!cleanName) {
+      return;
+    }
+    let nextId = normalizeViewId(cleanName);
+    const existingIds = new Set(databaseViews.views.map((view) => view.view_id));
+    let counter = 2;
+    while (existingIds.has(nextId)) {
+      nextId = `${normalizeViewId(cleanName)}-${counter}`;
+      counter += 1;
+    }
+    const nextViews = {
+      ...databaseViews,
+      active_view_id: nextId,
+      views: [...databaseViews.views, { view_id: nextId, name: cleanName, settings: { ...databaseViewSettings } }],
+    };
+    await saveDatabaseViews(nextViews);
+  }
+
+  async function renameDatabaseView(name) {
+    const cleanName = String(name || "").trim();
+    if (!cleanName) {
+      return;
+    }
+    const nextViews = {
+      ...databaseViews,
+      views: databaseViews.views.map((view) =>
+        view.view_id === databaseViews.active_view_id ? { ...view, name: cleanName } : view
+      ),
+    };
+    await saveDatabaseViews(nextViews);
+  }
+
+  async function deleteDatabaseView(viewId) {
+    const remaining = databaseViews.views.filter((view) => view.view_id !== viewId);
+    const safeViews = remaining.length ? remaining : [{ view_id: "default", name: "Default", settings: buildDefaultDatabaseViewSettings() }];
+    const nextViews = {
+      ...databaseViews,
+      active_view_id: safeViews[0].view_id,
+      views: safeViews,
+    };
+    await saveDatabaseViews(nextViews);
   }
 
   async function createDatabaseNote() {
@@ -518,12 +637,19 @@ export function App() {
   }
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(UI_SCALE_STORAGE_KEY, String(uiScale));
+  }, [uiScale]);
+
+  useEffect(() => {
     async function initializeApp() {
       try {
         await refreshTree();
         api.getOllamaSettings().then(setOllamaSettings).catch((error) => setStatusMessage(error.message));
         loadDatabase("").catch((error) => setStatusMessage(error.message));
-        loadDatabaseViewSettings("").catch((error) => setStatusMessage(error.message));
+        loadDatabaseViews("").catch((error) => setStatusMessage(error.message));
         const uiState = await api.getUiState();
         if (uiState.kind === "file" && uiState.path) {
           await loadDocument(uiState.path);
@@ -691,6 +817,7 @@ export function App() {
 
         <Toolbar
           selectedPath={selectedPath}
+          uiScale={uiScale}
           onCreateFile={() => promptAndCreate("file").catch((error) => setStatusMessage(error.message))}
           onCreateFolder={() => promptAndCreate("folder").catch((error) => setStatusMessage(error.message))}
           onQuickFind={() => setSearchOpen(true)}
@@ -699,6 +826,7 @@ export function App() {
           onSaveTemplate={() => saveCurrentAsTemplate().catch((error) => setStatusMessage(error.message))}
           onClearTemplate={() => clearCurrentTemplate().catch((error) => setStatusMessage(error.message))}
           onAttachFile={(file) => attachFileToCurrentNote(file).catch((error) => setStatusMessage(error.message))}
+          onChangeUiScale={setUiScale}
           ollamaSettings={ollamaSettings}
           onChangeOllama={updateOllamaSettings}
           ollamaHealth={ollamaHealth}
@@ -708,7 +836,7 @@ export function App() {
 
         <WorkspacePanels
           workspaceRef={workspaceRef}
-          workspaceStyle={workspaceStyle}
+          workspaceStyle={{ ...workspaceStyle, "--workspace-ui-scale": uiScale / 100 }}
           dragState={dragState}
           startResize={startResize}
           tree={tree}
@@ -719,6 +847,7 @@ export function App() {
           collapsedHeadings={collapsedHeadings}
           backlinks={backlinks}
           database={database}
+          databaseViews={databaseViews}
           databaseViewSettings={databaseViewSettings}
           relationOptions={relationOptions}
           textareaRef={textareaRef}
@@ -738,6 +867,10 @@ export function App() {
           onCreateRelation={(target) => createMissingRelationTarget(target).catch((error) => setStatusMessage(error.message))}
           onSaveDatabaseField={(path, column, value) => saveDatabaseField(path, column, value).catch((error) => setStatusMessage(error.message))}
           onChangeDatabaseViewSettings={(settings) => saveDatabaseViewSettings(settings).catch((error) => setStatusMessage(error.message))}
+          onSelectDatabaseView={(viewId) => selectDatabaseView(viewId).catch((error) => setStatusMessage(error.message))}
+          onCreateDatabaseView={(name) => createDatabaseView(name).catch((error) => setStatusMessage(error.message))}
+          onRenameDatabaseView={(name) => renameDatabaseView(name).catch((error) => setStatusMessage(error.message))}
+          onDeleteDatabaseView={(viewId) => deleteDatabaseView(viewId).catch((error) => setStatusMessage(error.message))}
           onCreateDatabaseNote={() => createDatabaseNote().catch((error) => setStatusMessage(error.message))}
           onEditorChange={handleEditorChange}
           onEditorCursorChange={setCursorPosition}

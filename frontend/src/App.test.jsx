@@ -68,6 +68,12 @@ const { apiMock, defaultViewSettings, mermaidMock, highlightMock } = vi.hoisted(
       }),
       getDatabaseViewSettings: vi.fn().mockResolvedValue(defaultViewSettings),
       saveDatabaseViewSettings: vi.fn().mockResolvedValue(defaultViewSettings),
+      getDatabaseViews: vi.fn().mockResolvedValue({
+        folder_path: "projects",
+        active_view_id: "default",
+        views: [{ view_id: "default", name: "Default", settings: defaultViewSettings }]
+      }),
+      saveDatabaseViews: vi.fn().mockImplementation((_path, views) => Promise.resolve(views)),
       getOllamaSettings: vi.fn().mockResolvedValue({ base_url: "http://127.0.0.1:11434", model: "llama3.2" }),
       saveOllamaSettings: vi.fn().mockResolvedValue({}),
       getOllamaHealth: vi.fn().mockResolvedValue({ status: "ok", model: "llama3.2" }),
@@ -120,6 +126,12 @@ afterEach(() => {
   });
   apiMock.getDatabaseViewSettings.mockResolvedValue(defaultViewSettings);
   apiMock.saveDatabaseViewSettings.mockResolvedValue(defaultViewSettings);
+  apiMock.getDatabaseViews.mockResolvedValue({
+    folder_path: "projects",
+    active_view_id: "default",
+    views: [{ view_id: "default", name: "Default", settings: defaultViewSettings }]
+  });
+  apiMock.saveDatabaseViews.mockImplementation((_path, views) => Promise.resolve(views));
   mermaidMock.initialize.mockClear();
   mermaidMock.run.mockClear();
   highlightMock.highlightElement.mockClear();
@@ -225,7 +237,7 @@ test("opens a folder database view", async () => {
   expect(await screen.findByRole("heading", { name: "Database" })).toBeInTheDocument();
   expect(await screen.findByText("Roadmap")).toBeInTheDocument();
   expect(apiMock.getFolderDatabase).toHaveBeenCalledWith("projects");
-  expect(apiMock.getDatabaseViewSettings).toHaveBeenCalledWith("projects");
+  expect(apiMock.getDatabaseViews).toHaveBeenCalledWith("projects");
 });
 
 test("prefills new note prompt from the selected folder and appends .md automatically", async () => {
@@ -336,6 +348,35 @@ test("loads persisted pane widths from localStorage", async () => {
   expect(workspace.style.gridTemplateColumns).toContain("500px");
 });
 
+test("loads persisted pane widths for the selected item and keeps them for new items", async () => {
+  window.localStorage.setItem("md-editor2:pane-sizes", JSON.stringify({
+    "__global__": { left: 320, right: 420 },
+    "note.md": { left: 380, right: 540 }
+  }));
+  apiMock.getUiState.mockResolvedValue({ kind: "file", path: "note.md" });
+  render(<App />);
+  await screen.findByLabelText("Markdown editor");
+  const workspace = document.querySelector(".workspace.enhanced");
+  expect(workspace.style.gridTemplateColumns).toContain("380px");
+  expect(workspace.style.gridTemplateColumns).toContain("540px");
+  fireEvent.click(await screen.findByRole("button", { name: /project\.md/i }));
+  await waitFor(() => expect(apiMock.getDocument).toHaveBeenCalledWith("project.md"));
+  expect(workspace.style.gridTemplateColumns).toContain("380px");
+  expect(workspace.style.gridTemplateColumns).toContain("540px");
+});
+
+test("persists and restores workspace scale", async () => {
+  window.localStorage.setItem("md-editor2:ui-scale", "115");
+  render(<App />);
+  await screen.findByRole("button", { name: "Menu" });
+  const workspace = document.querySelector(".workspace.enhanced");
+  expect(workspace.style.getPropertyValue("--workspace-ui-scale")).toBe("1.15");
+  await openWorkspaceMenu();
+  const scaleInput = screen.getByRole("slider", { name: "Scale" });
+  fireEvent.change(scaleInput, { target: { value: "105" } });
+  await waitFor(() => expect(window.localStorage.getItem("md-editor2:ui-scale")).toBe("105"));
+});
+
 test("saves inline database edits", async () => {
   apiMock.getTree.mockResolvedValue([
     { path: "projects", name: "projects", node_type: "folder", children: [] }
@@ -351,6 +392,68 @@ test("saves inline database edits", async () => {
   expect(apiMock.getFolderDatabase).toHaveBeenCalledWith("projects");
 });
 
+test("renders created and updated fields as datetime editors", async () => {
+  apiMock.getTree.mockResolvedValue([{ path: "projects", name: "projects", node_type: "folder", children: [] }]);
+  apiMock.getFolderDatabase.mockResolvedValue({
+    folder_path: "projects",
+    columns: ["created", "updated"],
+    notes: [
+      {
+        path: "projects/roadmap.md",
+        name: "roadmap.md",
+        title: "Roadmap",
+        frontmatter: { created: "2026-03-25T12:30", updated: "2026-03-25T12:45" }
+      }
+    ]
+  });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: /projects/i }));
+  const createdInput = await screen.findByDisplayValue("2026-03-25T12:30");
+  const updatedInput = await screen.findByDisplayValue("2026-03-25T12:45");
+  expect(createdInput).toHaveAttribute("type", "datetime-local");
+  expect(updatedInput).toHaveAttribute("type", "datetime-local");
+});
+
+test("renders exported UTC timestamps in datetime editors", async () => {
+  apiMock.getTree.mockResolvedValue([{ path: "projects", name: "projects", node_type: "folder", children: [] }]);
+  apiMock.getFolderDatabase.mockResolvedValue({
+    folder_path: "projects",
+    columns: ["created", "updated"],
+    notes: [
+      {
+        path: "projects/roadmap.md",
+        name: "roadmap.md",
+        title: "Roadmap",
+        frontmatter: { created: "2025-09-23 20:45:54Z", updated: "2025-09-23 20:45:54Z" }
+      }
+    ]
+  });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: /projects/i }));
+  expect(await screen.findAllByDisplayValue("2025-09-23T20:45")).toHaveLength(2);
+});
+
+test("clamps very long generated titles in database tables", async () => {
+  const veryLongTitle = "https://example.com/" + "a".repeat(140);
+  apiMock.getTree.mockResolvedValue([{ path: "projects", name: "projects", node_type: "folder", children: [] }]);
+  apiMock.getFolderDatabase.mockResolvedValue({
+    folder_path: "projects",
+    columns: ["status"],
+    notes: [
+      {
+        path: "projects/roadmap.md",
+        name: "roadmap.md",
+        title: veryLongTitle,
+        frontmatter: { status: "active" }
+      }
+    ]
+  });
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: /projects/i }));
+  const titleButton = await screen.findByRole("button", { name: /https:\/\/example\.com\//i });
+  expect(titleButton.textContent.length).toBeLessThan(veryLongTitle.length);
+});
+
 test("does not save unchanged inline database cells on blur", async () => {
   apiMock.getTree.mockResolvedValue([
     { path: "projects", name: "projects", node_type: "folder", children: [] }
@@ -363,6 +466,70 @@ test("does not save unchanged inline database cells on blur", async () => {
   await waitFor(() => expect(apiMock.saveDocument).not.toHaveBeenCalled());
 });
 
+test("supports multiple named database views per folder", async () => {
+  apiMock.getTree.mockResolvedValue([{ path: "projects", name: "projects", node_type: "folder", children: [] }]);
+  apiMock.getFolderDatabase.mockResolvedValue({
+    folder_path: "projects",
+    columns: ["status", "owner", "due"],
+    notes: [
+      {
+        path: "projects/roadmap.md",
+        name: "roadmap.md",
+        title: "Roadmap",
+        frontmatter: { status: "active", owner: "andrei", due: "2026-03-25" }
+      }
+    ]
+  });
+  apiMock.getDatabaseViews.mockResolvedValue({
+    folder_path: "projects",
+    active_view_id: "planning",
+    views: [
+      {
+        view_id: "planning",
+        name: "Planning",
+        settings: { ...defaultViewSettings, visible_columns: ["status", "owner"] }
+      },
+      {
+        view_id: "delivery",
+        name: "Delivery",
+        settings: { ...defaultViewSettings, visible_columns: ["status", "due"], view_mode: "board" }
+      }
+    ]
+  });
+  globalThis.prompt = vi.fn()
+    .mockReturnValueOnce("Ops")
+    .mockReturnValueOnce("Delivery Board");
+  render(<App />);
+  fireEvent.click(await screen.findByRole("button", { name: /projects/i }));
+    const viewSelect = await screen.findByLabelText("View");
+  expect(viewSelect).toHaveValue("planning");
+  fireEvent.change(viewSelect, { target: { value: "delivery" } });
+  await waitFor(() =>
+    expect(apiMock.saveDatabaseViews).toHaveBeenCalledWith(
+      "projects",
+      expect.objectContaining({ active_view_id: "delivery" })
+    )
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Save as new view" }));
+  await waitFor(() =>
+    expect(apiMock.saveDatabaseViews).toHaveBeenCalledWith(
+      "projects",
+      expect.objectContaining({
+        views: expect.arrayContaining([expect.objectContaining({ name: "Ops" })])
+      })
+    )
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Rename view" }));
+  await waitFor(() =>
+    expect(apiMock.saveDatabaseViews).toHaveBeenCalledWith(
+      "projects",
+      expect.objectContaining({
+        views: expect.arrayContaining([expect.objectContaining({ name: "Delivery Board" })])
+      })
+    )
+  );
+});
+
 test("persists database filter settings and creates notes", async () => {
   apiMock.getTree.mockResolvedValue([{ path: "projects", name: "projects", node_type: "folder", children: [] }]);
   globalThis.prompt = vi.fn().mockReturnValue("Sprint Plan");
@@ -370,7 +537,7 @@ test("persists database filter settings and creates notes", async () => {
   fireEvent.click(await screen.findByRole("button", { name: /projects/i }));
   const filterInput = await screen.findByPlaceholderText(/filter by title or field value/i);
   fireEvent.change(filterInput, { target: { value: "road" } });
-  await waitFor(() => expect(apiMock.saveDatabaseViewSettings).toHaveBeenCalled());
+  await waitFor(() => expect(apiMock.saveDatabaseViews).toHaveBeenCalled());
   fireEvent.click(screen.getByRole("button", { name: "New Note" }));
   await waitFor(() => expect(apiMock.createNode).toHaveBeenCalledWith("projects/sprint-plan.md", "file"));
   expect(apiMock.saveDocument).toHaveBeenCalledWith("projects/sprint-plan.md", expect.stringContaining("# Sprint Plan"));
@@ -478,11 +645,19 @@ test("uses per-folder status options and visible columns", async () => {
       }
     ]
   });
-  apiMock.getDatabaseViewSettings.mockResolvedValue({
-    ...defaultViewSettings,
-    status_options: ["queued", "doing", "done"],
-    visible_columns: ["status", "owner"],
-    view_mode: "board"
+  apiMock.getDatabaseViews.mockResolvedValue({
+    folder_path: "projects",
+    active_view_id: "default",
+    views: [{
+      view_id: "default",
+      name: "Default",
+      settings: {
+        ...defaultViewSettings,
+        status_options: ["queued", "doing", "done"],
+        visible_columns: ["status", "owner"],
+        view_mode: "board"
+      }
+    }]
   });
   globalThis.prompt = vi.fn().mockReturnValue("Launch Plan");
   render(<App />);
@@ -519,16 +694,20 @@ test("persists visible column and status option changes", async () => {
   fireEvent.change(statusOptionsInput, { target: { value: "queued, doing, done" } });
   fireEvent.blur(statusOptionsInput);
   await waitFor(() =>
-    expect(apiMock.saveDatabaseViewSettings).toHaveBeenCalledWith(
+    expect(apiMock.saveDatabaseViews).toHaveBeenCalledWith(
       "projects",
-      expect.objectContaining({ status_options: ["queued", "doing", "done"] })
+      expect.objectContaining({
+        views: [expect.objectContaining({ settings: expect.objectContaining({ status_options: ["queued", "doing", "done"] }) })]
+      })
     )
   );
   fireEvent.click(screen.getByLabelText("due"));
   await waitFor(() =>
-    expect(apiMock.saveDatabaseViewSettings).toHaveBeenCalledWith(
+    expect(apiMock.saveDatabaseViews).toHaveBeenCalledWith(
       "projects",
-      expect.objectContaining({ visible_columns: ["status", "owner"] })
+      expect.objectContaining({
+        views: [expect.objectContaining({ settings: expect.objectContaining({ visible_columns: ["status", "owner"] }) })]
+      })
     )
   );
 });
@@ -552,15 +731,19 @@ test("status options input keeps in-progress punctuation until blur", async () =
   const statusOptionsInput = await screen.findByDisplayValue("backlog, active, in-progress, paused, done");
   fireEvent.change(statusOptionsInput, { target: { value: "queued, " } });
   expect(statusOptionsInput).toHaveValue("queued, ");
-  expect(apiMock.saveDatabaseViewSettings).not.toHaveBeenCalledWith(
+  expect(apiMock.saveDatabaseViews).not.toHaveBeenCalledWith(
     "projects",
-    expect.objectContaining({ status_options: ["queued"] })
+    expect.objectContaining({
+      views: [expect.objectContaining({ settings: expect.objectContaining({ status_options: ["queued"] }) })]
+    })
   );
   fireEvent.blur(statusOptionsInput);
   await waitFor(() =>
-    expect(apiMock.saveDatabaseViewSettings).toHaveBeenCalledWith(
+    expect(apiMock.saveDatabaseViews).toHaveBeenCalledWith(
       "projects",
-      expect.objectContaining({ status_options: ["queued"] })
+      expect.objectContaining({
+        views: [expect.objectContaining({ settings: expect.objectContaining({ status_options: ["queued"] }) })]
+      })
     )
   );
 });
@@ -589,7 +772,12 @@ test("switches database to board mode and groups notes by status", async () => {
   fireEvent.click(await screen.findByRole("button", { name: /projects/i }));
   fireEvent.click(await screen.findByRole("button", { name: "Board" }));
   await waitFor(() =>
-    expect(apiMock.saveDatabaseViewSettings).toHaveBeenCalledWith("projects", expect.objectContaining({ view_mode: "board" }))
+    expect(apiMock.saveDatabaseViews).toHaveBeenCalledWith(
+      "projects",
+      expect.objectContaining({
+        views: [expect.objectContaining({ settings: expect.objectContaining({ view_mode: "board" }) })]
+      })
+    )
   );
   expect(await screen.findByRole("heading", { name: "active" })).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "done" })).toBeInTheDocument();

@@ -18,6 +18,8 @@
 - `GET /api/database?path=...`
 - `GET /api/database/view-settings?path=...`
 - `PUT /api/database/view-settings?path=...`
+- `GET /api/database/views?path=...`
+- `PUT /api/database/views?path=...`
 - `GET /api/ollama/settings`
 - `PUT /api/ollama/settings`
 - `GET /api/ollama/health`
@@ -32,6 +34,7 @@
 - `PUT /api/template?path=projects`: `{ "content": "# {{title}}\n" }`
 - `POST /api/attachment`: multipart form with `note_path` and uploaded `file`
 - `PUT /api/database/view-settings?path=projects`: `{ "filter_text": "", "sort_by": "title", "sort_direction": "asc", "view_mode": "table" | "board", "status_options": ["backlog", "done"], "visible_columns": ["status", "owner"] }`
+- `PUT /api/database/views?path=projects`: `{ "folder_path": "projects", "active_view_id": "default", "views": [{ "view_id": "default", "name": "Default", "settings": { ... } }] }`
 - `PUT /api/ollama/settings`: `{ "base_url": "http://127.0.0.1:11434", "model": "llama3.2" }`
 - `POST /api/ollama/prompt`: `{ "prompt": "Summarize this note..." }`
 
@@ -43,4 +46,5 @@
 - `POST /api/attachment` stores note-local files under the workspace `_attachments/` directory and returns a local `/workspace-assets/...` URL.
 - `GET /api/database` lists markdown notes directly inside a folder and extracts simple YAML-style frontmatter fields.
 - `GET /api/database/view-settings` returns saved folder view preferences, defaulting missing fields such as `view_mode` to `table`.
+- `GET /api/database/views` returns the named saved views for a folder together with the active view id.
 - Document HTML renders wiki-links as `wikilink:` anchors so the frontend can open linked notes locally.

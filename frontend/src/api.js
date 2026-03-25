@@ -99,6 +99,15 @@ export const api = {
       body: JSON.stringify(settings)
     });
   },
+  getDatabaseViews(path) {
+    return request(`/api/database/views?path=${encodeURIComponent(path || "")}`);
+  },
+  saveDatabaseViews(path, views) {
+    return request(`/api/database/views?path=${encodeURIComponent(path || "")}`, {
+      method: "PUT",
+      body: JSON.stringify(views)
+    });
+  },
   getOllamaSettings() {
     return request("/api/ollama/settings");
   },

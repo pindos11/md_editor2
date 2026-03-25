@@ -139,6 +139,19 @@ textarea {
   box-shadow: 0 18px 44px rgba(31, 51, 69, 0.12);
 }
 
+.toolbar-scale {
+  display: grid;
+  gap: 0.35rem;
+  color: #556678;
+}
+
+.toolbar-scale input {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 .toolbar-popover button {
   width: 100%;
   text-align: left;
@@ -166,6 +179,7 @@ textarea {
   display: grid;
   gap: 1rem;
   align-items: start;
+  font-size: calc(1rem * var(--workspace-ui-scale, 1));
 }
 
 .workspace.enhanced {
@@ -186,6 +200,14 @@ textarea {
   flex-direction: column;
   gap: 1rem;
   min-width: 0;
+}
+
+.tree-scroll {
+  min-height: 12rem;
+  max-height: 48vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 0.35rem;
 }
 
 .pane {
@@ -217,6 +239,7 @@ textarea {
 .tree-root ul {
   list-style: none;
   padding-left: 1rem;
+  margin: 0;
 }
 
 .tree-row {
@@ -360,6 +383,26 @@ textarea {
 .database-table-wrap {
   overflow-x: auto;
   overflow-y: visible;
+}
+
+.database-view-management {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  align-items: end;
+  margin-bottom: 1rem;
+}
+
+.database-view-picker {
+  display: grid;
+  gap: 0.35rem;
+  color: #556678;
+}
+
+.database-view-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .database-controls {

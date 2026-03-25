@@ -1,33 +1,47 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 const PANE_SIZES_STORAGE_KEY = "md-editor2:pane-sizes";
+const GLOBAL_LAYOUT_KEY = "__global__";
 const DEFAULT_PANE_SIZES = { left: 320, right: 420 };
 
-function loadStoredPaneSizes() {
-  if (typeof window === "undefined") {
+function normalizePaneSizes(rawValue) {
+  const left = Number(rawValue?.left);
+  const right = Number(rawValue?.right);
+  if (!Number.isFinite(left) || !Number.isFinite(right)) {
     return DEFAULT_PANE_SIZES;
+  }
+  return { left, right };
+}
+
+function loadStoredPaneSizeMap() {
+  if (typeof window === "undefined") {
+    return { [GLOBAL_LAYOUT_KEY]: DEFAULT_PANE_SIZES };
   }
   try {
     const rawValue = window.localStorage.getItem(PANE_SIZES_STORAGE_KEY);
     if (!rawValue) {
-      return DEFAULT_PANE_SIZES;
+      return { [GLOBAL_LAYOUT_KEY]: DEFAULT_PANE_SIZES };
     }
     const parsed = JSON.parse(rawValue);
-    const left = Number(parsed.left);
-    const right = Number(parsed.right);
-    if (!Number.isFinite(left) || !Number.isFinite(right)) {
-      return DEFAULT_PANE_SIZES;
+    if (parsed && !Array.isArray(parsed) && Object.prototype.hasOwnProperty.call(parsed, "left")) {
+      return { [GLOBAL_LAYOUT_KEY]: normalizePaneSizes(parsed) };
     }
-    return { left, right };
+    if (!parsed || Array.isArray(parsed)) {
+      return { [GLOBAL_LAYOUT_KEY]: DEFAULT_PANE_SIZES };
+    }
+    const entries = Object.entries(parsed).map(([key, value]) => [key, normalizePaneSizes(value)]);
+    return Object.fromEntries(entries);
   } catch {
-    return DEFAULT_PANE_SIZES;
+    return { [GLOBAL_LAYOUT_KEY]: DEFAULT_PANE_SIZES };
   }
 }
 
-export function usePaneLayout() {
-  const [paneSizes, setPaneSizes] = useState(loadStoredPaneSizes);
+export function usePaneLayout(layoutKey = GLOBAL_LAYOUT_KEY) {
+  const [paneSizeMap, setPaneSizeMap] = useState(loadStoredPaneSizeMap);
+  const [paneSizes, setPaneSizes] = useState(() => paneSizeMap[layoutKey] || paneSizeMap[GLOBAL_LAYOUT_KEY] || DEFAULT_PANE_SIZES);
   const [dragState, setDragState] = useState(null);
   const workspaceRef = useRef(null);
+  const previousLayoutKeyRef = useRef(layoutKey);
 
   const workspaceStyle = useMemo(
     () => ({
@@ -37,11 +51,37 @@ export function usePaneLayout() {
   );
 
   useEffect(() => {
+    if (previousLayoutKeyRef.current === layoutKey) {
+      return;
+    }
+    const inheritedSizes = paneSizeMap[layoutKey] || paneSizes || paneSizeMap[GLOBAL_LAYOUT_KEY] || DEFAULT_PANE_SIZES;
+    previousLayoutKeyRef.current = layoutKey;
+    setPaneSizes(inheritedSizes);
+    setPaneSizeMap((current) => {
+      const existing = current[layoutKey];
+      if (existing && existing.left === inheritedSizes.left && existing.right === inheritedSizes.right) {
+        return current;
+      }
+      return { ...current, [layoutKey]: inheritedSizes };
+    });
+  }, [layoutKey, paneSizeMap, paneSizes]);
+
+  useEffect(() => {
+    setPaneSizeMap((current) => {
+      const existing = current[layoutKey];
+      if (existing && existing.left === paneSizes.left && existing.right === paneSizes.right) {
+        return current;
+      }
+      return { ...current, [layoutKey]: paneSizes };
+    });
+  }, [layoutKey, paneSizes]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
-    window.localStorage.setItem(PANE_SIZES_STORAGE_KEY, JSON.stringify(paneSizes));
-  }, [paneSizes]);
+    window.localStorage.setItem(PANE_SIZES_STORAGE_KEY, JSON.stringify(paneSizeMap));
+  }, [paneSizeMap]);
 
   useEffect(() => {
     if (!dragState) {

@@ -73,6 +73,7 @@ The built frontend is written into [app/static](app/static) and served by Python
 - `.mdeditor/` metadata under the workspace root
 - `_attachments/` for uploaded note files
 - frontmatter-backed table and board views
+- multiple saved database views per folder
 - folder-level note templates
 - preview rendering for:
   - markdown

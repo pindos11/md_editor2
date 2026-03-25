@@ -90,6 +90,18 @@ class DatabaseViewSettings(BaseModel):
     visible_columns: list[str] = Field(default_factory=list)
 
 
+class NamedDatabaseView(BaseModel):
+    view_id: str
+    name: str
+    settings: DatabaseViewSettings = Field(default_factory=DatabaseViewSettings)
+
+
+class DatabaseViewCollection(BaseModel):
+    folder_path: str = ""
+    active_view_id: str = "default"
+    views: list[NamedDatabaseView] = Field(default_factory=lambda: [NamedDatabaseView(view_id="default", name="Default")])
+
+
 class UiState(BaseModel):
     kind: Literal["none", "file", "folder"] = "none"
     path: str = ""
