@@ -9,7 +9,16 @@ from app.api.errors import (
     missing_source_path,
     workspace_bad_request,
 )
-from app.models import CreateNodeRequest, DeleteNodeRequest, FolderTemplate, MoveNodeRequest, SaveDocumentRequest, UiState
+from app.models import (
+    CreateNodeRequest,
+    DeleteNodeRequest,
+    FolderTemplate,
+    MoveNodeRequest,
+    RestoreSnapshotRequest,
+    SaveDocumentRequest,
+    TemplateCollection,
+    UiState,
+)
 from app.services.workspace import WorkspaceError, WorkspaceManager
 
 
@@ -121,6 +130,54 @@ async def update_folder_template(
         return (await workspace.save_folder_template(path, payload or FolderTemplate(folder_path=path, content=""))).model_dump()
     except FileNotFoundError:
         raise missing_path()
+    except WorkspaceError as exc:
+        raise workspace_bad_request(exc)
+
+
+@router.get("/api/templates")
+async def get_template_collection(path: str = Query(""), workspace: WorkspaceManager = Depends(get_workspace)) -> dict:
+    try:
+        return workspace.load_template_collection(path).model_dump()
+    except FileNotFoundError:
+        raise missing_path()
+    except WorkspaceError as exc:
+        raise workspace_bad_request(exc)
+
+
+@router.put("/api/templates")
+async def update_template_collection(
+    path: str = Query(""),
+    payload: TemplateCollection | None = None,
+    workspace: WorkspaceManager = Depends(get_workspace),
+) -> dict:
+    try:
+        collection = payload or TemplateCollection(folder_path=path or "")
+        return (await workspace.save_template_collection(path, collection)).model_dump()
+    except FileNotFoundError:
+        raise missing_path()
+    except WorkspaceError as exc:
+        raise workspace_bad_request(exc)
+
+
+@router.get("/api/history")
+async def get_note_history(path: str = Query(...), workspace: WorkspaceManager = Depends(get_workspace)) -> dict:
+    try:
+        return workspace.get_note_history(path).model_dump()
+    except FileNotFoundError:
+        raise missing_document()
+    except WorkspaceError as exc:
+        raise workspace_bad_request(exc)
+
+
+@router.post("/api/history/restore")
+async def restore_note_snapshot(
+    payload: RestoreSnapshotRequest,
+    workspace: WorkspaceManager = Depends(get_workspace),
+) -> dict:
+    try:
+        return (await workspace.restore_snapshot(payload)).model_dump()
+    except FileNotFoundError:
+        raise missing_document()
     except WorkspaceError as exc:
         raise workspace_bad_request(exc)
 

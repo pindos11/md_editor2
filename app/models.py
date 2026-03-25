@@ -44,7 +44,14 @@ class DeleteNodeRequest(BaseModel):
 
 class OllamaSettings(BaseModel):
     base_url: str = "http://127.0.0.1:11434"
-    model: str = "llama3.2"
+    model: str = "qwen3.5:9b"
+    think: bool = False
+    prompt_presets: list[str] = Field(default_factory=lambda: [
+        "Summarize the current note into 3-6 concise bullets. Focus on actionable points, decisions, and follow-ups.",
+        "Extract action items from the current note as a short checklist.",
+        "Rewrite the current note for clarity while preserving the meaning.",
+        "List open questions or ambiguities in the current note.",
+    ])
 
 
 class OllamaPromptRequest(BaseModel):
@@ -54,6 +61,12 @@ class OllamaPromptRequest(BaseModel):
 class OllamaPromptResponse(BaseModel):
     model: str
     response: str
+    total_duration: int | None = None
+    load_duration: int | None = None
+    prompt_eval_count: int | None = None
+    prompt_eval_duration: int | None = None
+    eval_count: int | None = None
+    eval_duration: int | None = None
 
 
 class BacklinkItem(BaseModel):
@@ -110,6 +123,36 @@ class UiState(BaseModel):
 class FolderTemplate(BaseModel):
     folder_path: str = ""
     content: str = ""
+
+
+class TemplateEntry(BaseModel):
+    template_id: str
+    name: str
+    content: str = ""
+    is_default: bool = False
+
+
+class TemplateCollection(BaseModel):
+    folder_path: str = ""
+    templates: list[TemplateEntry] = Field(default_factory=list)
+
+
+class RestoreSnapshotRequest(BaseModel):
+    path: str
+    snapshot_id: str
+
+
+class NoteSnapshot(BaseModel):
+    snapshot_id: str
+    path: str
+    created_at: str
+    title: str = ""
+    content: str
+
+
+class NoteHistory(BaseModel):
+    path: str
+    snapshots: list[NoteSnapshot] = Field(default_factory=list)
 
 
 class AttachmentResponse(BaseModel):

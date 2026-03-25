@@ -4,6 +4,7 @@ import { BacklinksPane } from "./BacklinksPane";
 import { BlockOutline } from "./BlockOutline";
 import { DatabaseView } from "./DatabaseView";
 import { EditorPane } from "./EditorPane";
+import { HistoryPanel } from "./HistoryPanel";
 import { PreviewPane } from "./PreviewPane";
 import { TreeView } from "./TreeView";
 
@@ -20,6 +21,8 @@ export function WorkspacePanels({
   blocks,
   collapsedHeadings,
   backlinks,
+  history,
+  historyLoading,
   database,
   databaseViews,
   databaseViewSettings,
@@ -36,9 +39,11 @@ export function WorkspacePanels({
   onMoveBlock,
   onToggleHeadingCollapse,
   onOpenBacklink,
+  onRestoreSnapshot,
   onOpenNote,
   onOpenRelation,
   onCreateRelation,
+  onMoveBoardNote,
   onSaveDatabaseField,
   onChangeDatabaseViewSettings,
   onSelectDatabaseView,
@@ -81,6 +86,14 @@ export function WorkspacePanels({
           />
         ) : null}
         <BacklinksPane backlinks={backlinks} onOpen={onOpenBacklink} />
+        {viewMode === "editor" ? (
+          <HistoryPanel
+            selectedPath={selectedPath}
+            history={history}
+            loading={historyLoading}
+            onRestore={onRestoreSnapshot}
+          />
+        ) : null}
       </aside>
 
       <button type="button" className="pane-resizer" aria-label="Resize sidebar" onPointerDown={() => startResize("left")} />
@@ -96,6 +109,7 @@ export function WorkspacePanels({
           onOpenRelation={onOpenRelation}
           onCreateRelation={onCreateRelation}
           onSaveField={onSaveDatabaseField}
+          onMoveBoardNote={onMoveBoardNote}
           onChangeViewSettings={onChangeDatabaseViewSettings}
           onSelectView={onSelectDatabaseView}
           onCreateView={onCreateDatabaseView}

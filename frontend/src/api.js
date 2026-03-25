@@ -69,6 +69,24 @@ export const api = {
       body: JSON.stringify({ folder_path: path || "", content })
     });
   },
+  getTemplateCollection(path) {
+    return request(`/api/templates?path=${encodeURIComponent(path || "")}`);
+  },
+  saveTemplateCollection(path, collection) {
+    return request(`/api/templates?path=${encodeURIComponent(path || "")}`, {
+      method: "PUT",
+      body: JSON.stringify(collection)
+    });
+  },
+  getNoteHistory(path) {
+    return request(`/api/history?path=${encodeURIComponent(path)}`);
+  },
+  restoreNoteSnapshot(path, snapshotId) {
+    return request("/api/history/restore", {
+      method: "POST",
+      body: JSON.stringify({ path, snapshot_id: snapshotId })
+    });
+  },
   uploadAttachment(notePath, file) {
     const body = new FormData();
     body.append("note_path", notePath);

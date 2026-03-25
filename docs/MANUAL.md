@@ -69,8 +69,9 @@ Open `http://127.0.0.1:8000` in a browser.
 - Pane divider widths are remembered per note and per folder; if an item has no saved widths yet, it inherits the current layout once and then keeps its own state.
 - Fenced `mermaid` blocks render as diagrams in preview.
 - Fenced code blocks with a named language such as `python`, `js`, `ts`, `json`, `bash`, `yaml`, or `sql` render with preview-only syntax highlighting.
-- `Save as template` stores the current note content as the default starter template for its folder.
-- `Clear template` removes the saved default template for the current note's folder.
+- `Manage templates` opens a folder-level template manager for the current note or selected folder.
+- Templates are named, can be marked as default, overwritten from the current note, and deleted.
+- `Clear template` removes the current folder's default template quickly.
 - `Attach file` uploads a file into the local workspace and inserts a markdown link at the current cursor.
 - Pasting an image/file from the clipboard into the editor uploads it and inserts the markdown link automatically.
 - Dragging a file into the editor does the same upload-and-insert flow.
@@ -92,6 +93,7 @@ Open `http://127.0.0.1:8000` in a browser.
 - `Delete view` removes the current view, except for the default view.
 - Edit metadata inline in the table; changes save back into the note frontmatter on blur.
 - In board mode, notes are grouped by `status`, and changing a card's status moves it between columns after save.
+- In board mode, cards can also be dragged between status columns; dropping a card only changes its `status`.
 - The `Status options` field lets you define the board/select values for that folder, for example `queued, doing, done`.
 - Use the visible-column toggles to hide fields you do not want in the table or board card metadata.
 - `status` uses a dropdown, `due` uses a date input, `created` and `updated` use datetime inputs in table view, and `tags` remain comma-separated text that saves back as a YAML list.
@@ -100,9 +102,17 @@ Open `http://127.0.0.1:8000` in a browser.
 - Relation chips in the database are clickable and open the referenced note when it exists in the workspace.
 - Missing relation targets can be created directly from the relation field.
 - Use `New Note` inside the database pane to create a note with starter frontmatter directly in that folder; its default `status` uses the first status option for that folder.
-- New notes use the saved folder template when one exists; otherwise the app falls back to the default markdown starter content.
+- If the folder has saved templates, note creation opens a picker with `Blank note` plus the folder's named templates, preselecting the default template.
+- Create-missing-note flows for wiki-links and relation fields continue to use the default template automatically when one exists.
 - For `tags`, enter a comma-separated list and it will be written back as a YAML-style array.
 - Click a row title or board card title to open the note in the editor.
+
+## Note History
+- Every successful note save stores a lightweight snapshot under `.mdeditor/history/`.
+- History is per-note and keeps a recent rolling window of 20 snapshots instead of growing without bounds.
+- Rapid saves are coalesced into the newest history entry for about two minutes, so autosave pauses do not create a new snapshot every few seconds.
+- In editor mode, the sidebar `History` panel lists recent snapshots for the current note.
+- `Restore` loads the selected snapshot back into the note through the normal save path, so the restored content persists like any other edit.
 
 ## Automatic Metadata
 - On save, the backend can add or maintain `title`, `created`, and `updated` frontmatter.

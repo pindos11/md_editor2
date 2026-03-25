@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import { api } from "./api";
 import { SearchPalette } from "./components/SearchPalette";
+import { TemplateManagerModal } from "./components/TemplateManagerModal";
+import { TemplatePickerModal } from "./components/TemplatePickerModal";
 import { Toolbar } from "./components/Toolbar";
 import { WorkspacePanels } from "./components/WorkspacePanels";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
@@ -31,6 +33,13 @@ const SLASH_COMMANDS = [
   { id: "daily", label: "daily", description: "Daily note template", insert: "# Daily Note\n\n## Focus\n- \n\n## Journal\n\n## Wins\n- " },
 ];
 const UI_SCALE_STORAGE_KEY = "md-editor2:ui-scale";
+const DEFAULT_OLLAMA_PROMPT = "Summarize the current note into 3-6 concise bullets. Focus on actionable points, decisions, and follow-ups.";
+const DEFAULT_OLLAMA_PROMPT_PRESETS = [
+  DEFAULT_OLLAMA_PROMPT,
+  "Extract action items from the current note as a short checklist.",
+  "Rewrite the current note for clarity while preserving the meaning.",
+  "List open questions or ambiguities in the current note.",
+];
 
 function loadStoredUiScale() {
   if (typeof window === "undefined") {
@@ -38,6 +47,17 @@ function loadStoredUiScale() {
   }
   const raw = Number(window.localStorage.getItem(UI_SCALE_STORAGE_KEY));
   return Number.isFinite(raw) ? Math.max(85, Math.min(125, raw)) : 100;
+}
+
+function formatOllamaDuration(nanoseconds) {
+  if (!Number.isFinite(nanoseconds) || nanoseconds <= 0) {
+    return "";
+  }
+  const milliseconds = nanoseconds / 1_000_000;
+  if (milliseconds < 1000) {
+    return `${milliseconds.toFixed(0)} ms`;
+  }
+  return `${(milliseconds / 1000).toFixed(1)} s`;
 }
 
 export function App() {
@@ -48,14 +68,26 @@ export function App() {
   const [previewHtml, setPreviewHtml] = useState("");
   const [statusMessage, setStatusMessage] = useState("Ready");
   const [saveState, setSaveState] = useState("idle");
-  const [ollamaSettings, setOllamaSettings] = useState({ base_url: "http://127.0.0.1:11434", model: "llama3.2" });
+  const [ollamaSettings, setOllamaSettings] = useState({
+    base_url: "http://127.0.0.1:11434",
+    model: "llama3.2",
+    think: false,
+    prompt_presets: DEFAULT_OLLAMA_PROMPT_PRESETS,
+  });
   const [ollamaHealth, setOllamaHealth] = useState("not checked");
+  const [ollamaPrompt, setOllamaPrompt] = useState(DEFAULT_OLLAMA_PROMPT);
+  const [ollamaResponse, setOllamaResponse] = useState("");
+  const [ollamaStats, setOllamaStats] = useState("");
+  const [ollamaResponseSource, setOllamaResponseSource] = useState("");
+  const [ollamaRunning, setOllamaRunning] = useState(false);
   const [backlinks, setBacklinks] = useState([]);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [slashState, setSlashState] = useState({ open: false, query: "", commands: [] });
   const [wikiState, setWikiState] = useState({ open: false, query: "", items: [] });
   const [collapsedHeadings, setCollapsedHeadings] = useState(new Set());
   const [database, setDatabase] = useState({ folder_path: "", columns: [], notes: [] });
+  const [noteHistory, setNoteHistory] = useState({ path: "", snapshots: [] });
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [databaseViewSettings, setDatabaseViewSettings] = useState({
     filter_text: "",
     sort_by: "title",
@@ -78,6 +110,18 @@ export function App() {
   });
   const [viewMode, setViewMode] = useState("editor");
   const [uiScale, setUiScale] = useState(loadStoredUiScale);
+  const [templateCollection, setTemplateCollection] = useState({ folder_path: "", templates: [] });
+  const [templatePickerState, setTemplatePickerState] = useState({
+    open: false,
+    path: "",
+    folderPath: "",
+    title: "",
+    includeFrontmatter: false,
+    defaultStatus: "",
+    openAfterCreate: false,
+    refreshDatabase: false,
+  });
+  const [templateManagerOpen, setTemplateManagerOpen] = useState(false);
   const saveTimer = useRef(null);
   const textareaRef = useRef(null);
   const skipAutosaveRef = useRef(false);
@@ -189,17 +233,32 @@ export function App() {
       .replaceAll("{{folder}}", folderPath || "");
   }
 
+  function getDefaultTemplateId(collection) {
+    return collection.templates?.find((template) => template.is_default)?.template_id || "";
+  }
+
+  function getTemplateContentById(collection, templateId) {
+    return collection.templates?.find((template) => template.template_id === templateId)?.content || "";
+  }
+
+  async function loadTemplateCollection(folderPath = "") {
+    const payload = await api.getTemplateCollection(folderPath).catch(() => ({ folder_path: folderPath, templates: [] }));
+    setTemplateCollection(payload);
+    return payload;
+  }
+
   async function buildNewNoteContent(title, options = {}) {
     const folderPath = options.folderPath || "";
     const includeFrontmatter = options.includeFrontmatter ?? false;
     const defaultContent = includeFrontmatter
       ? `---\nstatus: ${options.defaultStatus || getDefaultStatus()}\ntags:\ndue:\nowner:\n---\n# ${title}\n`
       : `# ${title}\n`;
-    const template = await api.getFolderTemplate(folderPath).catch(() => ({ content: "" }));
-    if (!template.content?.trim()) {
+    const templateContent = options.templateContent
+      ?? getTemplateContentById(options.templateCollection || templateCollection, options.templateId || getDefaultTemplateId(options.templateCollection || templateCollection));
+    if (!templateContent?.trim()) {
       return defaultContent;
     }
-    return applyTemplatePlaceholders(template.content, title, folderPath);
+    return applyTemplatePlaceholders(templateContent, title, folderPath);
   }
 
   async function createMissingNote(rawTarget, options = {}) {
@@ -207,12 +266,15 @@ export function App() {
     const openAfterCreate = options.openAfterCreate ?? false;
     const includeFrontmatter = options.includeFrontmatter ?? false;
     const path = deriveNotePath(rawTarget, folderPath);
-    const title = normalizeTargetLabel(rawTarget);
+    const title = options.title || normalizeTargetLabel(rawTarget);
     await api.createNode(path, "file");
     const content = await buildNewNoteContent(title, {
       folderPath,
       includeFrontmatter,
       defaultStatus: options.defaultStatus,
+      templateContent: options.templateContent,
+      templateCollection: options.templateCollection,
+      templateId: options.templateId,
     });
     await api.saveDocument(path, content);
     await refreshTree(path);
@@ -246,6 +308,20 @@ export function App() {
     }
     const items = await api.getBacklinks(path);
     setBacklinks(items);
+  }
+
+  async function loadHistory(path) {
+    if (!path) {
+      setNoteHistory({ path: "", snapshots: [] });
+      return;
+    }
+    setHistoryLoading(true);
+    try {
+      const payload = await api.getNoteHistory(path);
+      setNoteHistory(payload);
+    } finally {
+      setHistoryLoading(false);
+    }
   }
 
   async function loadDatabase(folderPath = "") {
@@ -282,6 +358,7 @@ export function App() {
 
   async function loadDocument(path) {
     const payload = await api.getDocument(path);
+    const folderPath = containingFolder(path);
     skipAutosaveRef.current = true;
     setSelectedPath(path);
     setSelectedFolderPath("");
@@ -293,8 +370,9 @@ export function App() {
     setStatusMessage(`Loaded ${path}`);
     setCursorPosition(payload.content.length);
     setWikiState({ open: false, query: "", items: [] });
+    setTemplateManagerOpen(false);
     api.saveUiState({ kind: "file", path }).catch(() => {});
-    await loadBacklinks(path);
+    await Promise.all([loadBacklinks(path), loadHistory(path), loadTemplateCollection(folderPath)]);
   }
 
   async function loadFolder(folderPath) {
@@ -304,8 +382,10 @@ export function App() {
     setPreviewHtml("");
     setBacklinks([]);
     setCollapsedHeadings(new Set());
+    setNoteHistory({ path: "", snapshots: [] });
+    setTemplateManagerOpen(false);
     setViewMode("database");
-    await Promise.all([loadDatabase(folderPath), loadDatabaseViews(folderPath)]);
+    await Promise.all([loadDatabase(folderPath), loadDatabaseViews(folderPath), loadTemplateCollection(folderPath)]);
     setStatusMessage(`Loaded database for ${folderPath || "workspace"}`);
     api.saveUiState({ kind: "folder", path: folderPath }).catch(() => {});
   }
@@ -316,6 +396,10 @@ export function App() {
     await api.saveDocument(notePath, nextContent);
     await loadDatabase(selectedFolderPath);
     setStatusMessage(`Updated ${column} for ${notePath}`);
+  }
+
+  async function moveBoardNote(notePath, nextStatus) {
+    await saveDatabaseField(notePath, "status", nextStatus);
   }
 
   async function saveDatabaseViewSettings(nextSettings) {
@@ -395,33 +479,107 @@ export function App() {
     const slug = rawTitle.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "new-note";
     const folderPrefix = selectedFolderPath ? `${selectedFolderPath}/` : "";
     const path = `${folderPrefix}${slug}.md`;
-    await api.createNode(path, "file");
-    const starter = await buildNewNoteContent(rawTitle, {
+    const collection = await loadTemplateCollection(selectedFolderPath);
+    if (collection.templates?.length) {
+      setTemplatePickerState({
+        open: true,
+        path,
+        folderPath: selectedFolderPath,
+        title: rawTitle,
+        includeFrontmatter: true,
+        defaultStatus: getDefaultStatus(),
+        openAfterCreate: false,
+        refreshDatabase: true,
+      });
+      return;
+    }
+    await createMissingNote(rawTitle, {
       folderPath: selectedFolderPath,
       includeFrontmatter: true,
       defaultStatus: getDefaultStatus(),
     });
-    await api.saveDocument(path, starter);
-    await Promise.all([loadDatabase(selectedFolderPath), refreshTree()]);
-    setStatusMessage(`Created ${path}`);
   }
 
   async function saveCurrentAsTemplate() {
-    if (!selectedPath) {
+    const folderPath = currentFolderContext();
+    if (!folderPath && !selectedPath && !selectedFolderPath) {
       return;
     }
-    const folderPath = containingFolder(selectedPath);
-    await api.saveFolderTemplate(folderPath, documentContent);
-    setStatusMessage(`Saved template for ${folderPath || "workspace"}`);
+    await loadTemplateCollection(folderPath);
+    setTemplateManagerOpen(true);
   }
 
   async function clearCurrentTemplate() {
-    if (!selectedPath) {
+    const folderPath = currentFolderContext();
+    if (!folderPath && !selectedPath && !selectedFolderPath) {
       return;
     }
-    const folderPath = containingFolder(selectedPath);
     await api.saveFolderTemplate(folderPath, "");
+    await loadTemplateCollection(folderPath);
     setStatusMessage(`Cleared template for ${folderPath || "workspace"}`);
+  }
+
+  async function confirmTemplatePicker(templateId) {
+    const state = templatePickerState;
+    if (!state.path) {
+      setTemplatePickerState((current) => ({ ...current, open: false }));
+      return;
+    }
+    const collection = await loadTemplateCollection(state.folderPath);
+    const templateContent = templateId === "__blank__" ? "" : getTemplateContentById(collection, templateId);
+    await createMissingNote(state.path, {
+      folderPath: state.folderPath,
+      title: state.title,
+      includeFrontmatter: state.includeFrontmatter,
+      defaultStatus: state.defaultStatus,
+      openAfterCreate: state.openAfterCreate,
+      templateContent,
+    });
+    if (state.refreshDatabase) {
+      await loadDatabase(state.folderPath);
+    }
+    setTemplatePickerState({
+      open: false,
+      path: "",
+      folderPath: "",
+      title: "",
+      includeFrontmatter: false,
+      defaultStatus: "",
+      openAfterCreate: false,
+      refreshDatabase: false,
+    });
+  }
+
+  async function saveTemplateCollection(nextTemplates) {
+    const folderPath = currentFolderContext();
+    const payload = {
+      folder_path: folderPath,
+      templates: nextTemplates
+        .map((template, index) => ({
+          ...template,
+          template_id: template.template_id || `template-${index + 1}`,
+          name: String(template.name || "").trim() || `Template ${index + 1}`,
+        }))
+        .filter((template) => template.content.trim()),
+    };
+    await api.saveTemplateCollection(folderPath, payload);
+    await loadTemplateCollection(folderPath);
+    setTemplateManagerOpen(false);
+    setStatusMessage(`Saved templates for ${folderPath || "workspace"}`);
+  }
+
+  async function restoreSnapshot(snapshotId) {
+    if (!selectedPath || !snapshotId) {
+      return;
+    }
+    const payload = await api.restoreNoteSnapshot(selectedPath, snapshotId);
+    skipAutosaveRef.current = true;
+    setDocumentContent(payload.content);
+    setPreviewHtml(renderPreview(buildVisibleContent(payload.content, new Set())));
+    setCollapsedHeadings(new Set());
+    setSaveState("saved");
+    setStatusMessage(`Restored snapshot for ${selectedPath}`);
+    await Promise.all([refreshTree(selectedPath), loadBacklinks(selectedPath), loadHistory(selectedPath)]);
   }
 
   function buildAttachmentSnippet(payload, file) {
@@ -495,7 +653,7 @@ export function App() {
       setSaveState("saved");
       setStatusMessage(`Saved ${payload.path}`);
       await refreshTree(pathOverride);
-      await loadBacklinks(pathOverride);
+      await Promise.all([loadBacklinks(pathOverride), loadHistory(pathOverride)]);
     } catch (error) {
       setSaveState("error");
       setStatusMessage(error.message);
@@ -705,15 +863,28 @@ export function App() {
     if (!path) {
       return;
     }
-    await api.createNode(path, targetType);
-    await refreshTree(path);
     if (targetType === "file") {
       const title = normalizeTargetLabel(path);
       const folderPath = containingFolder(path);
-      const starter = await buildNewNoteContent(title, { folderPath, includeFrontmatter: false });
-      await api.saveDocument(path, starter);
-      await loadDocument(path);
+      const collection = await loadTemplateCollection(folderPath);
+      if (collection.templates?.length) {
+        setTemplatePickerState({
+          open: true,
+          path,
+          folderPath,
+          title,
+          includeFrontmatter: false,
+          defaultStatus: "",
+          openAfterCreate: true,
+          refreshDatabase: false,
+        });
+        return;
+      }
+      await createMissingNote(path, { folderPath, includeFrontmatter: false, openAfterCreate: true });
+      return;
     }
+    await api.createNode(path, targetType);
+    await refreshTree(path);
   }
 
   async function renameSelected() {
@@ -769,11 +940,39 @@ export function App() {
       return;
     }
     try {
-      const payload = await api.promptOllama(`Summarize this markdown note:\n\n${documentContent}`);
-      window.alert(payload.response || "No response from Ollama.");
+      setOllamaRunning(true);
+      const instruction = ollamaPrompt.trim() || DEFAULT_OLLAMA_PROMPT;
+      const payload = await api.promptOllama(`${instruction}\n\nMarkdown note:\n\n${documentContent}`);
+      setOllamaResponse(payload.response || "");
+      setOllamaResponseSource(selectedPath);
+      const loadPart = formatOllamaDuration(payload.load_duration);
+      const totalPart = formatOllamaDuration(payload.total_duration);
+      const stats = [loadPart ? `load ${loadPart}` : "", totalPart ? `total ${totalPart}` : ""].filter(Boolean).join(" | ");
+      setOllamaStats(stats);
+      setStatusMessage(payload.response?.trim() ? `Ollama response ready${stats ? ` (${stats})` : ""}` : "Ollama returned an empty response");
     } catch (error) {
       setStatusMessage(error.message);
+    } finally {
+      setOllamaRunning(false);
     }
+  }
+
+  function insertOllamaResponse() {
+    if (!selectedPath || !ollamaResponse.trim()) {
+      return;
+    }
+    const snippet = `\n\n## AI Notes\n\n${ollamaResponse.trim()}\n`;
+    const selectionStart = textareaRef.current?.selectionStart ?? documentContent.length;
+    const { content: nextValue, cursorPosition: nextPos } = insertSnippetsAtPosition(documentContent, [snippet.trim()], selectionStart);
+    setDocumentContent(nextValue);
+    setStatusMessage("Inserted Ollama response into note");
+    window.setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(nextPos, nextPos);
+        setCursorPosition(nextPos);
+      }
+    }, 0);
   }
 
   function handleEditorChange(value, selectionStart) {
@@ -817,6 +1016,7 @@ export function App() {
 
         <Toolbar
           selectedPath={selectedPath}
+          templateFolderPath={currentFolderContext()}
           uiScale={uiScale}
           onCreateFile={() => promptAndCreate("file").catch((error) => setStatusMessage(error.message))}
           onCreateFolder={() => promptAndCreate("folder").catch((error) => setStatusMessage(error.message))}
@@ -832,6 +1032,18 @@ export function App() {
           ollamaHealth={ollamaHealth}
           onCheckOllama={checkOllama}
           onRunPrompt={runPrompt}
+          ollamaPrompt={ollamaPrompt}
+          onChangeOllamaPrompt={setOllamaPrompt}
+          ollamaResponse={ollamaResponse}
+          ollamaStats={ollamaStats}
+          ollamaResponseSource={ollamaResponseSource}
+          ollamaRunning={ollamaRunning}
+          onInsertOllamaResponse={insertOllamaResponse}
+          onClearOllamaResponse={() => {
+            setOllamaResponse("");
+            setOllamaStats("");
+            setOllamaResponseSource("");
+          }}
         />
 
         <WorkspacePanels
@@ -846,6 +1058,8 @@ export function App() {
           blocks={blocks}
           collapsedHeadings={collapsedHeadings}
           backlinks={backlinks}
+          history={noteHistory}
+          historyLoading={historyLoading}
           database={database}
           databaseViews={databaseViews}
           databaseViewSettings={databaseViewSettings}
@@ -862,10 +1076,12 @@ export function App() {
           onMoveBlock={reorderBlock}
           onToggleHeadingCollapse={toggleHeadingCollapse}
           onOpenBacklink={(path) => loadDocument(path).catch((error) => setStatusMessage(error.message))}
+          onRestoreSnapshot={(snapshotId) => restoreSnapshot(snapshotId).catch((error) => setStatusMessage(error.message))}
           onOpenNote={(path) => loadDocument(path).catch((error) => setStatusMessage(error.message))}
           onOpenRelation={(target) => openRelationTarget(target).catch((error) => setStatusMessage(error.message))}
           onCreateRelation={(target) => createMissingRelationTarget(target).catch((error) => setStatusMessage(error.message))}
           onSaveDatabaseField={(path, column, value) => saveDatabaseField(path, column, value).catch((error) => setStatusMessage(error.message))}
+          onMoveBoardNote={(path, status) => moveBoardNote(path, status).catch((error) => setStatusMessage(error.message))}
           onChangeDatabaseViewSettings={(settings) => saveDatabaseViewSettings(settings).catch((error) => setStatusMessage(error.message))}
           onSelectDatabaseView={(viewId) => selectDatabaseView(viewId).catch((error) => setStatusMessage(error.message))}
           onCreateDatabaseView={(name) => createDatabaseView(name).catch((error) => setStatusMessage(error.message))}
@@ -880,6 +1096,22 @@ export function App() {
           onSelectSlashCommand={applySlashCommand}
           onSelectWikiLink={applyWikiLink}
           onOpenWikiLink={(target) => openWikiLink(target).catch((error) => setStatusMessage(error.message))}
+        />
+        <TemplatePickerModal
+          open={templatePickerState.open}
+          folderPath={templatePickerState.folderPath}
+          noteTitle={templatePickerState.title}
+          templates={templateCollection.templates || []}
+          onConfirm={(templateId) => confirmTemplatePicker(templateId).catch((error) => setStatusMessage(error.message))}
+          onCancel={() => setTemplatePickerState((current) => ({ ...current, open: false }))}
+        />
+        <TemplateManagerModal
+          open={templateManagerOpen}
+          folderPath={currentFolderContext()}
+          templates={templateCollection.templates || []}
+          documentContent={documentContent}
+          onSave={(templates) => saveTemplateCollection(templates).catch((error) => setStatusMessage(error.message))}
+          onClose={() => setTemplateManagerOpen(false)}
         />
       </main>
     </>

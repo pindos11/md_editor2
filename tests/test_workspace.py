@@ -1,11 +1,12 @@
 from pathlib import Path
 
 import asyncio
+import datetime
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.models import UiState
+from app.models import RestoreSnapshotRequest, UiState
 from app.server import create_app
 from app.services.ollama import OllamaService
 from app.services.workspace import METADATA_DIR, WorkspaceError, WorkspaceManager
@@ -313,6 +314,167 @@ def test_folder_template_and_attachment_flow(client: TestClient, tmp_path: Path)
     assert payload["path"].startswith("roadmap/")
     assert payload["url"].startswith("/workspace-assets/")
     assert (tmp_path / "_attachments").exists()
+
+
+def test_template_collection_migrates_legacy_template_string(tmp_path: Path) -> None:
+    manager = WorkspaceManager(tmp_path)
+    manager.initialize()
+    (tmp_path / "projects").mkdir()
+    manager.templates_path.write_text('{"projects": "# Legacy template\\n"}', encoding="utf-8")
+
+    collection = manager.load_template_collection("projects")
+
+    assert collection.folder_path == "projects"
+    assert len(collection.templates) == 1
+    assert collection.templates[0].name == "Default"
+    assert collection.templates[0].is_default is True
+    assert collection.templates[0].content == "# Legacy template\n"
+
+
+def test_template_collection_round_trip(client: TestClient) -> None:
+    client.post("/api/document", json={"path": "projects", "node_type": "folder"})
+
+    save_response = client.put(
+        "/api/templates",
+        params={"path": "projects"},
+        json={
+            "folder_path": "projects",
+            "templates": [
+                {"template_id": "blank", "name": "Blank", "content": "# {{title}}\n", "is_default": True},
+                {"template_id": "meeting", "name": "Meeting", "content": "# Meeting\n", "is_default": False},
+            ],
+        },
+    )
+    assert save_response.status_code == 200
+
+    get_response = client.get("/api/templates", params={"path": "projects"})
+    assert get_response.status_code == 200
+    payload = get_response.json()
+    assert payload["folder_path"] == "projects"
+    assert len(payload["templates"]) == 2
+    assert payload["templates"][0]["is_default"] is True
+
+
+def test_note_history_snapshots_and_restore(client: TestClient) -> None:
+    client.post("/api/document", json={"path": "notes/day.md", "node_type": "file"})
+    first_save = client.put("/api/document", json={"path": "notes/day.md", "content": "# First"})
+    assert first_save.status_code == 200
+    manager = client.app.state.workspace
+    original_timestamp = manager._current_timestamp
+    timestamps = iter([
+        "2026-03-26T10:00:00+02:00",
+        "2026-03-26T10:00:00+02:00",
+        "2026-03-26T10:03:30+02:00",
+        "2026-03-26T10:03:30+02:00",
+    ])
+    manager._current_timestamp = lambda: next(timestamps)
+    second_save = client.put("/api/document", json={"path": "notes/day.md", "content": "# Second"})
+    manager._current_timestamp = original_timestamp
+    assert second_save.status_code == 200
+
+    history_response = client.get("/api/history", params={"path": "notes/day.md"})
+    assert history_response.status_code == 200
+    history = history_response.json()
+    assert len(history["snapshots"]) >= 2
+    older_snapshot = next(snapshot for snapshot in history["snapshots"] if "# First" in snapshot["content"])
+
+    restore_response = client.post(
+        "/api/history/restore",
+        json={"path": "notes/day.md", "snapshot_id": older_snapshot["snapshot_id"]},
+    )
+    assert restore_response.status_code == 200
+    assert "# First" in restore_response.json()["content"]
+
+
+def test_note_history_coalesces_rapid_saves(tmp_path: Path) -> None:
+    manager = WorkspaceManager(tmp_path)
+    manager.initialize()
+    asyncio.run(manager.create_node("notes/day.md", "file"))
+    timestamps = iter([
+        "2026-03-26T10:00:00+02:00",
+        "2026-03-26T10:00:00+02:00",
+        "2026-03-26T10:01:00+02:00",
+        "2026-03-26T10:01:00+02:00",
+    ])
+    manager._current_timestamp = lambda: next(timestamps)
+
+    asyncio.run(manager.save_document("notes/day.md", "# First"))
+    asyncio.run(manager.save_document("notes/day.md", "# Second"))
+
+    history = manager.get_note_history("notes/day.md")
+    assert len(history.snapshots) == 1
+    assert "# Second" in history.snapshots[0].content
+
+
+def test_note_history_starts_new_snapshot_after_coalesce_window(tmp_path: Path) -> None:
+    manager = WorkspaceManager(tmp_path)
+    manager.initialize()
+    asyncio.run(manager.create_node("notes/day.md", "file"))
+    timestamps = iter([
+        "2026-03-26T10:00:00+02:00",
+        "2026-03-26T10:00:00+02:00",
+        "2026-03-26T10:01:00+02:00",
+        "2026-03-26T10:01:00+02:00",
+        "2026-03-26T10:03:30+02:00",
+        "2026-03-26T10:03:30+02:00",
+    ])
+    manager._current_timestamp = lambda: next(timestamps)
+
+    asyncio.run(manager.save_document("notes/day.md", "# First"))
+    asyncio.run(manager.save_document("notes/day.md", "# Second"))
+    asyncio.run(manager.save_document("notes/day.md", "# Third"))
+
+    history = manager.get_note_history("notes/day.md")
+    assert len(history.snapshots) == 2
+    assert "# Third" in history.snapshots[0].content
+    assert "# Second" in history.snapshots[1].content
+
+
+def test_snapshot_retention_limit(tmp_path: Path) -> None:
+    manager = WorkspaceManager(tmp_path)
+    manager.initialize()
+    asyncio.run(manager.create_node("notes/day.md", "file"))
+    base = datetime.datetime(2026, 3, 26, 10, 0, 0, tzinfo=datetime.timezone.utc)
+    counter = {"value": 0}
+    manager._current_timestamp = lambda: (base + datetime.timedelta(minutes=counter["value"] * 3)).isoformat(timespec="seconds")
+
+    for index in range(25):
+        counter["value"] = index
+        asyncio.run(manager.save_document("notes/day.md", f"# Version {index}"))
+
+    history = manager.get_note_history("notes/day.md")
+
+    assert len(history.snapshots) == 20
+    assert "# Version 24" in history.snapshots[0].content
+    assert "# Version 5" in history.snapshots[-1].content
+
+
+def test_restore_snapshot_creates_new_history_entry(tmp_path: Path) -> None:
+    manager = WorkspaceManager(tmp_path)
+    manager.initialize()
+    asyncio.run(manager.create_node("notes/day.md", "file"))
+    timestamps = iter([
+        "2026-03-26T10:00:00+02:00",
+        "2026-03-26T10:00:00+02:00",
+        "2026-03-26T10:03:30+02:00",
+        "2026-03-26T10:03:30+02:00",
+        "2026-03-26T10:04:00+02:00",
+        "2026-03-26T10:04:00+02:00",
+    ])
+    manager._current_timestamp = lambda: next(timestamps)
+
+    asyncio.run(manager.save_document("notes/day.md", "# First"))
+    asyncio.run(manager.save_document("notes/day.md", "# Second"))
+    original_history = manager.get_note_history("notes/day.md")
+    older_snapshot = next(snapshot for snapshot in original_history.snapshots if "# First" in snapshot.content)
+
+    restored = asyncio.run(manager.restore_snapshot(RestoreSnapshotRequest(path="notes/day.md", snapshot_id=older_snapshot.snapshot_id)))
+
+    updated_history = manager.get_note_history("notes/day.md")
+    assert "# First" in restored.content
+    assert len(updated_history.snapshots) == 3
+    assert "# First" in updated_history.snapshots[0].content
+    assert "# Second" in updated_history.snapshots[1].content
 
 
 def test_tree_hides_attachments_directory(client: TestClient, tmp_path: Path) -> None:

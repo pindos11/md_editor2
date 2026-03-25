@@ -199,6 +199,7 @@ export function DatabaseView({
   onOpenRelation,
   onCreateRelation,
   onSaveField,
+  onMoveBoardNote,
   onChangeViewSettings,
   onSelectView,
   onCreateView,
@@ -212,6 +213,7 @@ export function DatabaseView({
   const [savingCell, setSavingCell] = useState("");
   const [activeRelationCell, setActiveRelationCell] = useState("");
   const [statusOptionsDraft, setStatusOptionsDraft] = useState("");
+  const [draggedNotePath, setDraggedNotePath] = useState("");
   const activeView = useMemo(
     () => databaseViews.views?.find((view) => view.view_id === databaseViews.active_view_id) || databaseViews.views?.[0],
     [databaseViews]
@@ -372,6 +374,17 @@ export function DatabaseView({
     await saveFieldValue(notePath, column, nextValue);
   }
 
+  async function moveBoardNote(notePath, nextStatus) {
+    const previousStatus = drafts[notePath]?.status ?? "";
+    updateDraft(setDrafts, notePath, "status", nextStatus);
+    try {
+      await onMoveBoardNote(notePath, nextStatus);
+    } catch (error) {
+      updateDraft(setDrafts, notePath, "status", previousStatus);
+      throw error;
+    }
+  }
+
   return (
     <section className="pane database-pane">
       <div className="pane-header">
@@ -489,10 +502,32 @@ export function DatabaseView({
                     <h3>{status === "unset" ? "Unset" : status}</h3>
                     <span>{columnNotes.length}</span>
                   </div>
-                  <div className="board-card-list">
+                  <div
+                    className={`board-card-list ${draggedNotePath ? "board-drop-active" : ""}`}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const notePath = event.dataTransfer.getData("text/plain") || draggedNotePath;
+                      if (!notePath) {
+                        return;
+                      }
+                      const nextStatus = status === "unset" ? "" : status;
+                      moveBoardNote(notePath, nextStatus).catch(() => {});
+                      setDraggedNotePath("");
+                    }}
+                  >
                     {columnNotes.length ? (
                       columnNotes.map((note) => (
-                        <article key={note.path} className="board-card">
+                        <article
+                          key={note.path}
+                          className="board-card"
+                          draggable
+                          onDragStart={(event) => {
+                            setDraggedNotePath(note.path);
+                            event.dataTransfer?.setData("text/plain", note.path);
+                          }}
+                          onDragEnd={() => setDraggedNotePath("")}
+                        >
                           <button type="button" className="database-link board-card-link" onClick={() => onOpenNote(note.path)}>
                             {clampTitle(note.title)}
                           </button>

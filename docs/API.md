@@ -14,6 +14,10 @@
 - `PUT /api/ui-state`
 - `GET /api/template?path=...`
 - `PUT /api/template?path=...`
+- `GET /api/templates?path=...`
+- `PUT /api/templates?path=...`
+- `GET /api/history?path=...`
+- `POST /api/history/restore`
 - `POST /api/attachment`
 - `GET /api/database?path=...`
 - `GET /api/database/view-settings?path=...`
@@ -32,6 +36,8 @@
 - `DELETE /api/document`: `{ "path": "notes/new-note.md" }`
 - `PUT /api/ui-state`: `{ "kind": "none" | "file" | "folder", "path": "notes/new-note.md" }`
 - `PUT /api/template?path=projects`: `{ "content": "# {{title}}\n" }`
+- `PUT /api/templates?path=projects`: `{ "folder_path": "projects", "templates": [{ "template_id": "meeting", "name": "Meeting", "content": "# Meeting\n", "is_default": false }] }`
+- `POST /api/history/restore`: `{ "path": "notes/new-note.md", "snapshot_id": "abc123" }`
 - `POST /api/attachment`: multipart form with `note_path` and uploaded `file`
 - `PUT /api/database/view-settings?path=projects`: `{ "filter_text": "", "sort_by": "title", "sort_direction": "asc", "view_mode": "table" | "board", "status_options": ["backlog", "done"], "visible_columns": ["status", "owner"] }`
 - `PUT /api/database/views?path=projects`: `{ "folder_path": "projects", "active_view_id": "default", "views": [{ "view_id": "default", "name": "Default", "settings": { ... } }] }`
@@ -43,6 +49,9 @@
 - `GET /api/backlinks` returns notes that reference the target through wiki-links like `[[Alpha]]`.
 - `GET /api/ui-state` returns the last open file or folder remembered for the current workspace root.
 - `GET /api/template` returns the saved starter template for the requested folder path.
+- `GET /api/templates` returns the named template collection for a folder and migrates older single-template data compatibly.
+- `GET /api/history` returns recent saved snapshots for a markdown note.
+- `POST /api/history/restore` restores a snapshot by id through the normal document save path.
 - `POST /api/attachment` stores note-local files under the workspace `_attachments/` directory and returns a local `/workspace-assets/...` URL.
 - `GET /api/database` lists markdown notes directly inside a folder and extracts simple YAML-style frontmatter fields.
 - `GET /api/database/view-settings` returns saved folder view preferences, defaulting missing fields such as `view_mode` to `table`.

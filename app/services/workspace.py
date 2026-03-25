@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import hashlib
+import uuid
 import re
 import shutil
 from pathlib import Path
@@ -20,9 +22,14 @@ from app.models import (
     FolderTemplate,
     FolderDatabaseResponse,
     FolderNoteSummary,
+    NoteHistory,
+    NoteSnapshot,
     NamedDatabaseView,
     OllamaSettings,
+    RestoreSnapshotRequest,
     SearchResult,
+    TemplateCollection,
+    TemplateEntry,
     TreeNode,
     UiState,
 )
@@ -34,9 +41,12 @@ CONFIG_FILE = "config.json"
 DB_VIEWS_FILE = "db_views.json"
 UI_STATE_FILE = "ui_state.json"
 TEMPLATES_FILE = "templates.json"
+HISTORY_DIR = "history"
 WIKI_LINK_PATTERN = re.compile(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]")
 FRONTMATTER_PATTERN = re.compile(r"\A---\n(.*?)\n---\n?", re.DOTALL)
 AUTO_TITLE_LIMIT = 140
+SNAPSHOT_RETENTION = 20
+SNAPSHOT_COALESCE_SECONDS = 120
 
 
 class WorkspaceError(Exception):
@@ -52,12 +62,14 @@ class WorkspaceManager:
         self.db_views_path = self.metadata_dir / DB_VIEWS_FILE
         self.ui_state_path = self.metadata_dir / UI_STATE_FILE
         self.templates_path = self.metadata_dir / TEMPLATES_FILE
+        self.history_dir = self.metadata_dir / HISTORY_DIR
         self._write_lock = asyncio.Lock()
 
     def initialize(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         self.metadata_dir.mkdir(exist_ok=True)
         self.attachments_dir.mkdir(exist_ok=True)
+        self.history_dir.mkdir(exist_ok=True)
         if not self.config_path.exists():
             settings = OllamaSettings()
             self.config_path.write_text(settings.model_dump_json(indent=2), encoding="utf-8")
@@ -193,7 +205,18 @@ class WorkspaceManager:
         return f"{title[:AUTO_TITLE_LIMIT - 1].rstrip()}…"
 
     def _current_timestamp(self) -> str:
-        return datetime.datetime.now().astimezone().replace(second=0, microsecond=0).isoformat(timespec="minutes")
+        return datetime.datetime.now().astimezone().replace(microsecond=0).isoformat(timespec="seconds")
+
+    def _parse_timestamp(self, value: str) -> datetime.datetime | None:
+        normalized = str(value or "").strip()
+        if not normalized:
+            return None
+        try:
+            if normalized.endswith("Z"):
+                normalized = f"{normalized[:-1]}+00:00"
+            return datetime.datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
 
     def _serialize_frontmatter(self, frontmatter: dict[str, str | list[str]], body: str) -> str:
         entries = list(frontmatter.items())
@@ -221,6 +244,91 @@ class WorkspaceManager:
         cleaned = Path(filename or "attachment").name
         cleaned = re.sub(r"[^A-Za-z0-9._-]+", "-", cleaned).strip(".-")
         return cleaned or "attachment"
+
+    def _history_file_for_path(self, raw_path: str) -> Path:
+        digest = hashlib.sha1(raw_path.encode("utf-8")).hexdigest()
+        return self.history_dir / f"{digest}.json"
+
+    def _default_template_id(self, name: str) -> str:
+        slug = self._slugify_name(name)
+        return slug or f"template-{uuid.uuid4().hex[:8]}"
+
+    def _normalize_template_collection(self, raw_path: str, stored: object) -> TemplateCollection:
+        key = raw_path or ""
+        if isinstance(stored, str):
+            return TemplateCollection(
+                folder_path=key,
+                templates=[TemplateEntry(template_id="default", name="Default", content=stored, is_default=True)] if stored else [],
+            )
+        if not stored:
+            return TemplateCollection(folder_path=key, templates=[])
+        collection = TemplateCollection.model_validate({"folder_path": key, **stored})
+        if collection.templates and not any(template.is_default for template in collection.templates):
+            collection.templates[0].is_default = True
+        return collection
+
+    def _normalize_template_entries(self, collection: TemplateCollection) -> TemplateCollection:
+        templates = list(collection.templates)
+        if templates and not any(template.is_default for template in templates):
+            templates[0].is_default = True
+        return TemplateCollection(folder_path=collection.folder_path, templates=templates)
+
+    def _snapshot_title(self, content: str, fallback_name: str) -> str:
+        _, body = self._parse_frontmatter(content)
+        return self._normalize_auto_title(self._title_from_body(body, fallback_name), fallback_name)
+
+    def _load_note_history(self, raw_path: str) -> NoteHistory:
+        history_path = self._history_file_for_path(raw_path)
+        if not history_path.exists():
+            return NoteHistory(path=raw_path, snapshots=[])
+        payload = json.loads(history_path.read_text(encoding="utf-8"))
+        return NoteHistory.model_validate({"path": raw_path, **payload})
+
+    async def _save_snapshot(self, raw_path: str, content: str, *, force_new: bool = False) -> None:
+        fallback_name = Path(raw_path).stem or "Note"
+        history = self._load_note_history(raw_path)
+        created_at = self._current_timestamp()
+        title = self._snapshot_title(content, fallback_name)
+        if history.snapshots and not force_new:
+            latest = history.snapshots[0]
+            if latest.content == content:
+                return
+            latest_created_at = self._parse_timestamp(latest.created_at)
+            current_created_at = self._parse_timestamp(created_at)
+            if latest_created_at and current_created_at and (current_created_at - latest_created_at).total_seconds() < SNAPSHOT_COALESCE_SECONDS:
+                history.snapshots[0] = NoteSnapshot(
+                    snapshot_id=latest.snapshot_id,
+                    path=raw_path,
+                    created_at=latest.created_at,
+                    title=title,
+                    content=content,
+                )
+            else:
+                history.snapshots.insert(
+                    0,
+                    NoteSnapshot(
+                        snapshot_id=uuid.uuid4().hex,
+                        path=raw_path,
+                        created_at=created_at,
+                        title=title,
+                        content=content,
+                    ),
+                )
+        else:
+            history.snapshots.insert(
+                0,
+                NoteSnapshot(
+                    snapshot_id=uuid.uuid4().hex,
+                    path=raw_path,
+                    created_at=created_at,
+                    title=title,
+                    content=content,
+                ),
+            )
+        history.snapshots = history.snapshots[:SNAPSHOT_RETENTION]
+        history_path = self._history_file_for_path(raw_path)
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        history_path.write_text(history.model_dump_json(indent=2), encoding="utf-8")
 
     def build_tree(self) -> list[TreeNode]:
         def walk(directory: Path) -> list[TreeNode]:
@@ -292,6 +400,7 @@ class WorkspaceManager:
         normalized_content = self._serialize_frontmatter(frontmatter, body)
         async with self._write_lock:
             document_path.write_text(normalized_content, encoding="utf-8")
+            await self._save_snapshot(raw_path, normalized_content)
         return self.get_document(raw_path)
 
     async def create_node(self, raw_path: str, node_type: str) -> None:
@@ -521,26 +630,73 @@ class WorkspaceManager:
         return state
 
     def load_folder_template(self, raw_path: str) -> FolderTemplate:
+        collection = self.load_template_collection(raw_path)
+        default_template = next((template for template in collection.templates if template.is_default), None)
+        return FolderTemplate(folder_path=collection.folder_path, content=default_template.content if default_template else "")
+
+    async def save_folder_template(self, raw_path: str, template: FolderTemplate) -> FolderTemplate:
+        collection = self.load_template_collection(raw_path)
+        if not template.content.strip():
+            collection.templates = [entry for entry in collection.templates if not entry.is_default]
+        elif collection.templates:
+            updated = False
+            next_templates: list[TemplateEntry] = []
+            for entry in collection.templates:
+                if entry.is_default:
+                    next_templates.append(TemplateEntry(template_id=entry.template_id, name=entry.name, content=template.content, is_default=True))
+                    updated = True
+                else:
+                    next_templates.append(entry)
+            if not updated:
+                next_templates.insert(0, TemplateEntry(template_id="default", name="Default", content=template.content, is_default=True))
+            collection.templates = next_templates
+        else:
+            collection.templates = [TemplateEntry(template_id="default", name="Default", content=template.content, is_default=True)]
+        await self.save_template_collection(raw_path, collection)
+        return FolderTemplate(folder_path=collection.folder_path, content=template.content)
+
+    def load_template_collection(self, raw_path: str) -> TemplateCollection:
         self.initialize()
         folder_path = self.resolve_path(raw_path) if raw_path else self.root
         if not folder_path.exists() or not folder_path.is_dir():
             raise FileNotFoundError(raw_path)
         payload = json.loads(self.templates_path.read_text(encoding="utf-8"))
         key = self.to_relative(folder_path)
-        return FolderTemplate(folder_path=key, content=payload.get(key, ""))
+        return self._normalize_template_collection(key, payload.get(key, {}))
 
-    async def save_folder_template(self, raw_path: str, template: FolderTemplate) -> FolderTemplate:
+    async def save_template_collection(self, raw_path: str, collection: TemplateCollection) -> TemplateCollection:
         self.initialize()
         folder_path = self.resolve_path(raw_path) if raw_path else self.root
         if not folder_path.exists() or not folder_path.is_dir():
             raise FileNotFoundError(raw_path)
         key = self.to_relative(folder_path)
-        stored = FolderTemplate(folder_path=key, content=template.content)
+        normalized = self._normalize_template_entries(TemplateCollection(folder_path=key, templates=collection.templates))
         async with self._write_lock:
             payload = json.loads(self.templates_path.read_text(encoding="utf-8"))
-            payload[key] = stored.content
+            payload[key] = {"templates": [template.model_dump() for template in normalized.templates]}
             self.templates_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        return stored
+        return normalized
+
+    def get_note_history(self, raw_path: str) -> NoteHistory:
+        document_path = self.resolve_path(raw_path)
+        if not document_path.exists() or not document_path.is_file():
+            raise FileNotFoundError(raw_path)
+        if document_path.suffix.lower() != ".md":
+            raise WorkspaceError("Only markdown files are supported.")
+        return self._load_note_history(raw_path)
+
+    async def restore_snapshot(self, payload: RestoreSnapshotRequest) -> DocumentResponse:
+        history = self.get_note_history(payload.path)
+        snapshot = next((item for item in history.snapshots if item.snapshot_id == payload.snapshot_id), None)
+        if not snapshot:
+            raise FileNotFoundError(payload.snapshot_id)
+        document_path = self.resolve_path(payload.path)
+        if document_path.suffix.lower() != ".md":
+            raise WorkspaceError("Only markdown files are supported.")
+        async with self._write_lock:
+            document_path.write_text(snapshot.content, encoding="utf-8")
+            await self._save_snapshot(payload.path, snapshot.content, force_new=True)
+        return self.get_document(payload.path)
 
     def render_template(self, raw_path: str, title: str, fallback: str) -> str:
         template = self.load_folder_template(raw_path).content

@@ -8,6 +8,8 @@ Single-user, offline-first markdown workspace with:
 - multiple saved database views per folder
 - local attachments
 - folder templates
+- multiple named templates per folder
+- per-note snapshot history with restore
 - optional local Ollama integration
 
 The app is served by a Python backend and uses a bundled frontend. Runtime use does not require internet access, and end users do not need Node.js if the frontend has already been built.
@@ -77,6 +79,8 @@ The built frontend is written into [app/static](app/static) and served by Python
 - multiple saved database views per folder
 - per-item remembered pane widths, tree-only scrolling, and a persisted UI scale control
 - folder-level note templates
+- multiple named folder templates with a picker on note creation
+- per-note saved snapshot history with restore
 - automatic `title`, `created`, and `updated` frontmatter management on save
 - preview rendering for:
   - markdown
