@@ -322,7 +322,7 @@ textarea {
   justify-content: flex-start;
   text-align: left;
   line-height: 1.25;
-  font-size: 0.95rem;
+  font-size: 1.12em;
 }
 
 .tree-node.selected {
