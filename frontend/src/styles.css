@@ -281,27 +281,28 @@ textarea {
 .tree-root,
 .tree-root ul {
   list-style: none;
-  padding-left: 1rem;
+  padding-left: 0.7rem;
   margin: 0;
 }
 
 .tree-row {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.2rem;
 }
 
 .tree-toggle,
 .tree-spacer {
-  width: 2rem;
-  flex: 0 0 2rem;
+  width: 1.35rem;
+  flex: 0 0 1.35rem;
 }
 
 .tree-toggle {
-  padding: 0.35rem 0;
-  border-radius: 12px;
-  background: rgba(32, 51, 71, 0.08);
+  padding: 0.12rem 0;
+  border-radius: 10px;
+  background: rgba(32, 51, 71, 0.06);
   color: #203347;
+  font-size: 0.9rem;
 }
 
 .tree-spacer {
@@ -310,19 +311,37 @@ textarea {
 
 .tree-node {
   width: 100%;
-  margin: 0.2rem 0;
+  margin: 0.04rem 0;
   display: flex;
-  gap: 0.55rem;
+  gap: 0.3rem;
   align-items: flex-start;
-  border-radius: 14px;
+  padding: 0.24rem 0.45rem;
+  border-radius: 10px;
   background: transparent;
   color: #1d2733;
   justify-content: flex-start;
   text-align: left;
+  line-height: 1.25;
+  font-size: 0.95rem;
 }
 
 .tree-node.selected {
   background: #e3edf6;
+}
+
+.tree-root > li:nth-child(odd) > .tree-row .tree-node,
+.tree-root ul > li:nth-child(odd) > .tree-row .tree-node {
+  background: rgba(227, 237, 246, 0.3);
+}
+
+.tree-root > li:nth-child(even) > .tree-row .tree-node,
+.tree-root ul > li:nth-child(even) > .tree-row .tree-node {
+  background: rgba(255, 250, 241, 0.12);
+}
+
+.tree-root > li > .tree-row .tree-node:hover,
+.tree-root ul > li > .tree-row .tree-node:hover {
+  background: rgba(227, 237, 246, 0.62);
 }
 
 .preview a {
